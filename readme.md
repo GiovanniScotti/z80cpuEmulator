@@ -13,7 +13,7 @@ The baseline emulated hardware architecture has the following specification:
 * MC6850 ACIA as serial communication interface
 
 ## Building
-To compile and run the emulator, your system must have the `**ncurses**` library installed.
+To compile and run the emulator, your system must have the `ncurses` library installed.
 After having cloned the git repository, proceed with the commands below.
 
 ```console
@@ -22,11 +22,11 @@ $ make                  # Build the emulator
 $ ./z80emulator         # Run the executable
 ```
 
-In order to clean your system from compiled source files, logs and executables, make use of `**make clean**`.
+In order to clean your system from compiled source files, logs and executables, execute `make clean`.
 
 ## System start up
 As soon as the emulator is started, messages start popping up on the terminal.
-At `**Memory top?**` press ENTER to use full memory (32KB), otherwise enter the required value. After testing memory, the following message appears:
+At `Memory top?` press ENTER to use full memory (32KB), otherwise enter the required value. After testing memory, the following text appears:
 
 ```
 Z80 BASIC Ver 4.7b
@@ -35,7 +35,7 @@ Copyright (C) 1978 by Microsoft
 Ok
 ```
 
-The BASIC interpreter is now ready to use.
+The BASIC interpreter is now ready to use and accept commands.
 To exit the emulator, press `CTRL+C`.
 
 ## Limitations
