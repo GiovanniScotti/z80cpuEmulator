@@ -1,0 +1,8 @@
+
+*.ipch
+
+*.bin
+
+*.o
+
+z80emulator
