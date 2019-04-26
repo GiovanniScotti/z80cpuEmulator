@@ -7,10 +7,10 @@ The project was originally born in order to provide an in-software version of th
 
 ## Emulated system hardware
 The baseline emulated hardware architecture has the following specification:
-* Z80 CPU core
-* 32KB ROM to store programs
-* 32KB RAM to store runtime data
-* MC6850 ACIA as serial communication interface
+*  Z80 CPU core
+*  32KB ROM to store programs
+*  32KB RAM to store runtime data
+*  MC6850 ACIA as serial communication interface
 
 ## Building
 To compile and run the emulator, your system must have the `ncurses` library installed.
