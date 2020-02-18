@@ -40,9 +40,9 @@ To exit the emulator, press `CTRL+C`.
 
 ## Limitations
 Currently, the project has the following known issues and limitations:
-* DAA instruction not implemented
-* IN/OUT group partially implemented
-* Support for mode 1 interrupts only
+*  DAA instruction not implemented
+*  IN/OUT group partially implemented
+*  Support for mode 1 interrupts only
 
 ## Credits
 Please, keep in mind that the modified BASIC interpreter is a Grant Searle's intellectual property. In this repository you will find the .HEX file loaded up by the emulator. If you need further information and would like to delve into the hardware implementation, have a look at http://searle.hostei.com/grant/z80/SimpleZ80.html.
