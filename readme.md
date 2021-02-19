@@ -3,7 +3,7 @@
 # Z80 CPU Emulator
 ## Introduction
 This is a highly portable Zilog Z80 cpu emulator written in C programming language.
-The project was originally born in order to provide an in-software version of the remarkable Grant's 7-chip Z80 computer ([link](http://searle.hostei.com/grant/z80/SimpleZ80.html)). Although the emulator runs a slightly modified version of the Microsoft BASIC as used in the Nascom 2 computer, the z80 core might be used as a starting point for other ambitious projects.
+The project was originally born in order to provide an in-software version of the remarkable Grant's 7-chip Z80 computer ([link](http://searle.hostei.com/grant/z80/SimpleZ80.html)). Although the emulator runs a slightly modified version of the Microsoft BASIC as used in the Nascom 2 computer, the Z80 core can be used as a starting point for any other ambitious project.
 
 ## Emulated system hardware
 The baseline emulated hardware architecture has the following specification:
@@ -14,12 +14,18 @@ The baseline emulated hardware architecture has the following specification:
 
 ## Building
 To compile and run the emulator, your system must have the `ncurses` library installed.
+To do that, run the following command:
+
+```console
+$ sudo apt-get install libncurses5-dev libncursesw5-dev
+```
+
 After having cloned the git repository, proceed with the commands below.
 
 ```console
 $ cd z80cpuEmulator     # Enters the project's directory
-$ make                  # Build the emulator
-$ ./z80emulator         # Run the executable
+$ make                  # Builds the emulator
+$ ./z80emulator         # Runs the executable
 ```
 
 In order to clean your system from compiled source files, logs and executables, execute `make clean`.
