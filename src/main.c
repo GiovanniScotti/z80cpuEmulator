@@ -6,6 +6,7 @@
 
 #include "logger.h"
 #include "hex2array.h"
+#include "memory.h"
 
 ///////////////////////////////////////////////////////////
 // Z80 CPU Emulator VERSION.
@@ -150,6 +151,13 @@ int main(int argc, char **argv) {
     if (hex2array(ROM_PATH, buffer, 0x8000)) {
         LOG_ERROR("Unable to load the hex file (%s).\n", ROM_PATH);
     }
+
+    ///////////////////////////////////////////////
+    // TODO: Chunk test. To be removed.
+    mem_chunk_t rom = {"ROM", 0x0, 0x8000, 0, buffer};
+    memory_printChunk(&rom);
+
+    ////////////////////////////////////////////////
 
     // TODO: if the hex is not leaded, the cpu is expected to spinning.
     // Memory is filled with NOPs.

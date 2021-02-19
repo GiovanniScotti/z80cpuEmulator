@@ -1,31 +1,27 @@
-#include <ncurses.h>
-#include <stdio.h>
-
-#include "Z80.h"
-#include "logger.h"
 #include "memory.h"
+#include "logger.h"
 
 
-void printMemory(RamBank *ram, u16 size) {
-  writeLog("\n");
-  writeLog("Addr.\t0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
+void memory_printChunk(mem_chunk_t *chunk) {
+    LOG_DEBUG("Memory chunk: %s\n", chunk->label);
+    LOG_DEBUG("Addr.\t0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
 
-  for(int byte = 0; byte < size; byte++) {
-    int col = byte/16;
+    for (int32_t byte = 0; byte < chunk->size; byte++) {
+        int32_t col = byte >> 4;
 
-    // Right-hand side of the table
-    if(byte%16 == 0) {
-      writeLog("\n");
-      fprintf(fpLog, "%03X", col);
-      writeLog("0\t");
+        // Right-hand side of the table.
+        if (byte % 16 == 0) {
+            LOG_DEBUG("\n");
+            LOG_DEBUG("%03X0\t", col);
+        }
+
+        LOG_DEBUG("%02X ", *((chunk->ptr) + byte));
     }
-
-    fprintf(fpLog, "%02X ", *(ram[0].ptr+byte));
-  }
-  writeLog("\n\n");
+    LOG_DEBUG("\n\n");
+    return;
 }
 
-
+/*
 u8 readByte(u16 offset) {
   int c;
 
@@ -77,3 +73,4 @@ u16 stackPop() {
 
   return value;
 }
+*/

@@ -1,11 +1,7 @@
-#ifndef Z80_H
-#define Z80_H
+#ifndef _CPU_H_
+#define _CPU_H_
 
-#include "logger.h"
-#include "mc6850.h"
-#include "memory.h"
-#include "opcodes.h"
-#include "roms.h"
+#include <stdint.h>
 
 
 #define FLAG_SIGN_BIT   7
@@ -29,89 +25,91 @@ extern OpTbl opTbl[];
 
 
 struct {
-  u32 cycles;
-  u8  halt;
-    // Main register set
+    uint32_t cycles;
+    uint8_t  halt;
+
+    // Main register set.
     union {
-      struct {
-        u8 C;
-        u8 B;
-        u8 E;
-        u8 D;
-        u8 L;
-        u8 H;
-        u8 F;
-        u8 A;
-      };
-      struct {
-        u16 BC;
-        u16 DE;
-        u16 HL;
-        u16 AF;
-      };
+        struct {
+            uint8_t C;
+            uint8_t B;
+            uint8_t E;
+            uint8_t D;
+            uint8_t L;
+            uint8_t H;
+            uint8_t F;
+            uint8_t A;
+        };
+        struct {
+            uint16_t BC;
+            uint16_t DE;
+            uint16_t HL;
+            uint16_t AF;
+        };
     };
 
-    // Alternate register set
+    // Alternate register set.
     union {
-      struct {
-        u8 Cr;
-        u8 Br;
-        u8 Er;
-        u8 Dr;
-        u8 Lr;
-        u8 Hr;
-        u8 Fr;
-        u8 Ar;
-      };
-      struct {
-        u16 BrCr;
-        u16 DrEr;
-        u16 HrLr;
-        u16 ArFr;
-      };
+        struct {
+            uint8_t Cr;
+            uint8_t Br;
+            uint8_t Er;
+            uint8_t Dr;
+            uint8_t Lr;
+            uint8_t Hr;
+            uint8_t Fr;
+            uint8_t Ar;
+        };
+        struct {
+            uint16_t BrCr;
+            uint16_t DrEr;
+            uint16_t HrLr;
+            uint16_t ArFr;
+        };
     };
 
-    // Special purpose registers
+    // Special purpose registers.
     struct {
-      u8  I;    // Interrupt vector
-      u8  R;    // Memory refresh
-      u16 IX;
-      u16 IY;
-      u16 PC;
-      u16 SP;
+        uint8_t  I;    // Interrupt vector.
+        uint8_t  R;    // Memory refresh.
+        uint16_t IX;
+        uint16_t IY;
+        uint16_t PC;
+        uint16_t SP;
     };
 
-  RamBank *ram;
+    RamBank *ram;
 
-  // Interrupt
-  u8 IFF1;
-  u8 IFF2;
-  u8 IM;
-  /*
-    Mode 0: similar to 8080. The interrupting device can place any instruction
-      on the data bus and the cpu executes it. Only a single-byte instrudiediediediediediediection
-      can be actually placed on the bus (usually RST). Two additional clock
-      cycles are needed to complete the restarting instruction.
-    Mode 1: the cpu executes a restart at address 0x38. Two additional clock
-      cycles are needed to complete the restarting instruction.
-    Mode 2: the cpu executes a restart at address
-      || z80.I | 7-bit from interrupting device | 0 ||
-      19 clock cycles are required (7 to fetch the lower bits, 6 to save the PC
-      and 6 to obtain the jump address).
-  */
-  u8 pendingInterrupt;
-  // TODO: NMI is not implemented yet
+    // Interrupt.
+    uint8_t IFF1;
+    uint8_t IFF2;
+    uint8_t IM;
+    /*
+      Mode 0: similar to 8080. The interrupting device can place any instruction
+        on the data bus and the cpu executes it. Only a single-byte instruction
+        can be actually placed on the bus (usually RST). Two additional clock
+        cycles are needed to complete the restarting instruction.
+      Mode 1: the cpu executes a restart at address 0x38. Two additional clock
+        cycles are needed to complete the restarting instruction.
+      Mode 2: the cpu executes a restart at address
+        || z80.I | 7-bit from interrupting device | 0 ||
+        19 clock cycles are required (7 to fetch the lower bits, 6 to save the PC
+        and 6 to obtain the jump address).
+    */
+    uint8_t pendingInterrupt;
+    // TODO: NMI is not implemented yet.
 
-  // Input/Output
-  u8   (*portIn)  (int port);
-  void (*portOut) (int port, u8 value);
-} z80;
+    // Input/Output
+    uint8_t (*portIn) (int32_t port);
+    void (*portOut) (int32_t port, uint8_t value);
+} cpu_t;
 
-void resetZ80();
-int  initZ80(char rom[]);
+void cpu_reset(void);
+int32_t cpu_init(char rom[]);
+
+
 void dumpRegisters();
 void emulateZ80(int instrToExec);
-void die(char *errMsg);
 void causeMaskblInt();
 
-#endif
+#endif // _CPU_H_

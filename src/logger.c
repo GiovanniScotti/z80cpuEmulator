@@ -16,8 +16,8 @@ void logger_open(const char *logfile) {
         fplog = fopen(logfile, "w");
         if (fplog == NULL)
             LOG_ERROR("Cannot open the given logfile (%s).\n", logfile);
-        else
-            LOG_INFO("Logging file successfully created (%s).\n", logfile);
+        else {}
+            //LOG_INFO("Logging file successfully created (%s).\n", logfile);
     }
     return;
 }
@@ -36,13 +36,15 @@ void logger_close(void) {
 // Debug prints are output on the standard error.
 void logger_write(const int32_t level, const char *format, ...) {
     va_list args;
-    va_start(args, format);
 
     // Prints on the stderr.
     if (level <= logger_verbosity) {
+        va_start(args, format);
         vfprintf(stderr, format, args);
-        if (fplog != NULL)
+        if (fplog != NULL) {
+            va_start(args, format);
             vfprintf(fplog, format, args);
+        }
     }
 
     va_end(args);

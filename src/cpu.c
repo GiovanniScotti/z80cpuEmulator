@@ -1,15 +1,16 @@
-#include <ncurses.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include "Z80.h"
+#include "cpu.h"
 
 
-void resetZ80() {
-  writeLog("[INFO] Resetting Z80 CPU.\n");
+// Resets the CPU.
+void cpu_reset(void) {
+    LOG_INFO("Reset Z80 CPU.\n");
 
+    // TODO: this must be a real hard reset!
   memset(&z80, 0xFF, sizeof(z80));
   z80.cycles = 0;
   z80.halt = 0;
@@ -34,7 +35,8 @@ void resetZ80() {
 }
 
 
-int initZ80(char rom[]) {
+// Initializes the CPU data structures.
+int32_t cpu_init(char rom[]) {
   // Reset the CPU
   resetZ80();
 
@@ -181,12 +183,4 @@ void causeMaskblInt() {
     // TODO: IM 0 and IM 2 are still missing
     else die("[ERROR] Interrupt mode not supported.\n");
   }
-}
-
-
-void die(char *errMsg) {
-  writeLog(errMsg);
-  printw("%s", errMsg);
-  refresh();
-  exit(-1);
 }
