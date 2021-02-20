@@ -4,7 +4,9 @@
 #include <unistd.h>
 
 #include "cpu.h"
+#include "logger.h"
 
+/*
 
 // Resets the CPU.
 void cpu_reset(void) {
@@ -66,6 +68,92 @@ int32_t cpu_init(char rom[]) {
   return 1; // Return successfully
 }
 
+*/
+
+
+
+// Reads one byte at the given memory location. The CPU has 64KB of
+// addressable memory.
+uint8_t cpu_read(cpu_t *cpu, const uint16_t addr) {
+    mem_chunk_t *mem_bank = cpu->memory;
+
+    do {
+        if (WHITIN(addr, mem_bank->start, mem_bank->start + mem_bank->size - 1)
+            && mem_bank->type != CHUNK_UNUSED) {
+
+            return mem_bank->buff[addr - mem_bank->start];
+        }
+    } while ((mem_bank = mem_bank->next) != NULL);
+
+    LOG_FATAL("Memory read error at address 0x%04X.\n", addr);
+    exit(1);
+}
+
+
+// Writes one byte at the given memory location. The CPU has 64KB of
+// addressable memory.
+void cpu_write(cpu_t *cpu, const uint8_t data, const uint16_t addr) {
+    mem_chunk_t *mem_bank = cpu->memory;
+
+    do {
+        if (WHITIN(addr, mem_bank->start, mem_bank->start + mem_bank->size - 1)) {
+            if (mem_bank->type == CHUNK_READONLY) {
+                LOG_FATAL("Cannot write to read-only memory at address 0x%04X.",
+                    addr);
+                exit(1);
+            }
+
+            if (mem_bank->type == CHUNK_READWRITE) {
+                mem_bank->buff[addr - mem_bank->start] = data;
+                return;
+            }
+        }
+    } while ((mem_bank = mem_bank->next) != NULL);
+
+    LOG_FATAL("Memory write error at address 0x%04X.\n", addr);
+    exit(1);
+}
+
+
+// Pushes the given data on the stack.
+void cpu_stackPush(cpu_t *cpu, uint16_t data) {
+    cpu_write(cpu, (data >> 8) & 0xFF, --cpu->SP);  // (SP-1) <- valueH
+    cpu_write(cpu, data & 0xFF, --cpu->SP);         // (SP-2) <- valueL
+    return;
+}
+
+
+// Pops data from the stack.
+uint16_t cpu_stackPop(cpu_t *cpu) {
+    uint16_t data = cpu_read(cpu, cpu->SP++);
+    data |= (cpu_read(cpu, cpu->SP++) << 8);
+    return data;
+}
+
+
+// Prints the content of the given memory chunk.
+void cpu_printChunk(mem_chunk_t *chunk) {
+    LOG_DEBUG("Memory chunk: %s\n", chunk->label);
+    LOG_DEBUG("Addr.\t0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
+
+    for (int32_t byte = 0; byte < chunk->size; byte++) {
+        int32_t col = byte >> 4;
+
+        // Right-hand side of the table.
+        if (byte % 16 == 0) {
+            LOG_DEBUG("\n");
+            LOG_DEBUG("%03X0\t", col);
+        }
+
+        LOG_DEBUG("%02X ", *((chunk->buff) + byte));
+    }
+    LOG_DEBUG("\n\n");
+    return;
+}
+
+
+
+/*
 
 void dumpRegisters() {
   writeLog("\nRegisters:\n");
@@ -115,11 +203,9 @@ void emulateZ80(int instrToExec) {
     z80.cycles += opTbl[opcode].TStates;
     instrDone++;
 
-    /*
-      After the execution of the current instruction, check for
-      key pressed with kbhit(). If one key was pressed, then put it
-      into RDR, set RX_FULL and pendingInterrupt.
-    */
+    // After the execution of the current instruction, check for
+    // key pressed with kbhit(). If one key was pressed, then put it
+    // into RDR, set RX_FULL and pendingInterrupt.
 
     if(kbhit() && !(m6850.status & RX_FULL)) {
       char ch = getch();
@@ -131,10 +217,8 @@ void emulateZ80(int instrToExec) {
       z80.pendingInterrupt = 1;
     }
 
-    /*
-      After checking incoming characters, check the ACIA status register
-      and determine if a byte is ready to be transmitted.
-    */
+    // After checking incoming characters, check the ACIA status register
+    // and determine if a byte is ready to be transmitted.
 
     if(!(m6850.status & TX_EMPTY)) {
       char charToPrint = m6850.TDR;
@@ -184,3 +268,6 @@ void causeMaskblInt() {
     else die("[ERROR] Interrupt mode not supported.\n");
   }
 }
+
+*/
+

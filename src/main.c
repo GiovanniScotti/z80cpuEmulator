@@ -6,7 +6,7 @@
 
 #include "logger.h"
 #include "hex2array.h"
-#include "memory.h"
+#include "cpu.h"
 
 ///////////////////////////////////////////////////////////
 // Z80 CPU Emulator VERSION.
@@ -14,30 +14,6 @@
 ///////////////////////////////////////////////////////////
 
 #define ROM_PATH "./rom/ROM_32K.HEX"
-
-
-/*
- * Default memory configuration:
- * 32KB ROM + 32KB RAM
- *
- * The Z80 CPU can directly address only up to 64KB of memory.
- */
-
-// Memory initialization
-/*
-RamBank ramBanks[RAM_BANKS_N] = {
-  { 0x0000,     // Starting address
-    ROM_SIZE,   // Memory size
-    FLAG_ROM,   // Flag
-    NULL        // Pointer
-  },
-  { ROM_SIZE,
-    RAM_SIZE,
-    FLAG_USED,
-    NULL
-  }
-};
-*/
 
 
 // Exit handler in case SIGINT is received.
@@ -63,7 +39,7 @@ static void print_usage(FILE *stream, const char *this_program, int32_t exit_cod
 
 // Prints program version, license and exits.
 static void print_version(FILE *stream, int32_t exit_code) {
-    fprintf(stream, "Z80 CPU EMULATOR VER. %s\n", VERSION_STR);
+    fprintf(stream, "Z80 CPU Emulator VER. %s\n", VERSION_STR);
     fprintf(stream, "License GPLv3+: GNU GPL version 3 or later "
                     "<http://gnu.org/licenses/gpl.html>.\n");
     fprintf(stream, "This is free software: you are free to change and "
@@ -143,19 +119,34 @@ int main(int argc, char **argv) {
 
 
     // TODO: call self_test() to perform self checking operations.
-    // TODO: initialize the Z80 configuration.
 
 
-    // Loads the hex file into memory.
-    uint8_t *buffer = (uint8_t *)malloc(0x8000);
-    if (hex2array(ROM_PATH, buffer, 0x8000)) {
-        LOG_ERROR("Unable to load the hex file (%s).\n", ROM_PATH);
+    ///////////////////////////////////////////////////////
+    // MEMORY CONFIGURATION
+    uint8_t *rom_buff = (uint8_t *)calloc(0x8000, sizeof(uint8_t));
+    uint8_t *ram_buff = (uint8_t *)calloc(0x8000, sizeof(uint8_t));
+
+    if (rom_buff != NULL && ram_buff != NULL) {
+        // Loads the hex file into rom memory.
+        if (hex2array(ROM_PATH, rom_buff, 0x8000)) {
+            LOG_ERROR("Unable to load the hex file (%s).\n", ROM_PATH);
+        }
+    } else {
+        LOG_FATAL("Cannot initialize memory structures.");
+        exit(1);
     }
 
-    ///////////////////////////////////////////////
-    // TODO: Chunk test. To be removed.
-    mem_chunk_t rom = {"ROM", 0x0, 0x8000, 0, buffer};
-    memory_printChunk(&rom);
+
+    // TODO: how can we deallocate memory? raise() instead of exit and
+    // cpu_destroy in exit handler?
+
+
+    mem_chunk_t ram = {"RAM", CHUNK_READWRITE, 0x8000, 0x8000, ram_buff, NULL};
+    mem_chunk_t rom = {"ROM", CHUNK_READONLY, 0, 0x8000, rom_buff, &ram};
+    cpu_printChunk(&rom);
+
+    free(rom_buff);
+    free(ram_buff);
 
     ////////////////////////////////////////////////
 

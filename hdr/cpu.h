@@ -20,11 +20,30 @@
 #define FLAG_ADDSUB (1 << FLAG_ADDSUB_BIT) // N
 #define FLAG_CARRY 	(1 << FLAG_CARRY_BIT)  // C
 
+// Chunk types.
+#define CHUNK_UNUSED     0
+#define CHUNK_READONLY   1
+#define CHUNK_READWRITE  2
 
-extern OpTbl opTbl[];
+#define WHITIN(x, y, z) ((x >= y) && (x <= z))
 
 
-struct {
+// Memory bank description.
+typedef struct mem_chunk_t {
+    char *label;
+    uint8_t type;
+    uint16_t start;
+    uint16_t size;
+    uint8_t *buff;
+    struct mem_chunk_t *next;
+} mem_chunk_t;
+
+
+
+//extern OpTbl opTbl[];
+
+
+typedef struct {
     uint32_t cycles;
     uint8_t  halt;
 
@@ -78,7 +97,8 @@ struct {
         uint16_t SP;
     };
 
-    RamBank *ram;
+    // Attached memory banks.
+    mem_chunk_t *memory;
 
     // Interrupt.
     uint8_t IFF1;
@@ -104,12 +124,20 @@ struct {
     void (*portOut) (int32_t port, uint8_t value);
 } cpu_t;
 
-void cpu_reset(void);
-int32_t cpu_init(char rom[]);
+
+//int32_t cpu_init(cpu_t *cpu, mem_chunk_t *mem_list);
+//void cpu_reset(cpu_t *cpu);
 
 
-void dumpRegisters();
-void emulateZ80(int instrToExec);
-void causeMaskblInt();
+uint8_t cpu_read(cpu_t *cpu, const uint16_t addr);
+void cpu_write(cpu_t *cpu, const uint8_t data, const uint16_t addr);
+void cpu_stackPush(cpu_t *cpu, uint16_t data);
+uint16_t cpu_stackPop(cpu_t *cpu);
+
+void cpu_printChunk(mem_chunk_t *chunk);
+
+//void dumpRegisters();
+//void emulateZ80(int instrToExec);
+//void causeMaskblInt();
 
 #endif // _CPU_H_

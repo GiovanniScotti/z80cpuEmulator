@@ -16,8 +16,8 @@ void logger_open(const char *logfile) {
         fplog = fopen(logfile, "w");
         if (fplog == NULL)
             LOG_ERROR("Cannot open the given logfile (%s).\n", logfile);
-        else {}
-            //LOG_INFO("Logging file successfully created (%s).\n", logfile);
+        else
+            LOG_INFO("Logging file successfully created (%s).\n", logfile);
     }
     return;
 }
