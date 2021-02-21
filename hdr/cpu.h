@@ -5,7 +5,7 @@
 
 
 ///////////////////////////////////////////////////////////
-// FLAG REGISTER BITS
+// FLAG REGISTER BITS DEFINITIONS
 // Sign flag is set if the sign of a result after an operation is negative,
 // reset if it is zero or positive.
 #define FLAG_SIGN_BIT   7
@@ -20,19 +20,26 @@
 // Carry flag indicates a carry from the high-order bit of the accumulator (B7).
 #define FLAG_CARRY_BIT  0
 
-// #define FLAG_SIGN 	(1 << FLAG_SIGN_BIT)   // S
-// #define FLAG_ZERO 	(1 << FLAG_ZERO_BIT)   // Z
-// #define FLAG_HCARRY (1 << FLAG_HCARRY_BIT) // H
-// #define FLAG_PARITY (1 << FLAG_PARITY_BIT) // P/V
-// #define FLAG_ADDSUB (1 << FLAG_ADDSUB_BIT) // N
-// #define FLAG_CARRY 	(1 << FLAG_CARRY_BIT)  // C
+#define GET_FLAG_SIGN(F) 	   ((F >> FLAG_SIGN_BIT) & 0x1)        // S
+#define GET_FLAG_ZERO(F) 	   ((F >> FLAG_ZERO_BIT) & 0x1)        // Z
+#define GET_FLAG_HCARRY(F)     ((F >> FLAG_HCARRY_BIT) & 0x1)      // H
+#define GET_FLAG_PARITY(F)     ((F >> FLAG_PARITY_BIT) & 0x1)      // P/V
+#define GET_FLAG_ADDSUB(F)     ((F >> FLAG_ADDSUB_BIT) & 0x1)      // N
+#define GET_FLAG_CARRY(F) 	   ((F >> FLAG_CARRY_BIT) & 0x1)       // C
 
-#define GET_FLAG_SIGN(F) 	((F >> FLAG_SIGN_BIT) & 0x1)    // S
-#define GET_FLAG_ZERO(F) 	((F >> FLAG_ZERO_BIT) & 0x1)    // Z
-#define GET_FLAG_HCARRY(F)  ((F >> FLAG_HCARRY_BIT) & 0x1)  // H
-#define GET_FLAG_PARITY(F)  ((F >> FLAG_PARITY_BIT) & 0x1)  // P/V
-#define GET_FLAG_ADDSUB(F)  ((F >> FLAG_ADDSUB_BIT) & 0x1)  // N
-#define GET_FLAG_CARRY(F) 	((F >> FLAG_CARRY_BIT) & 0x1)   // C
+#define SET_FLAG_SIGN(cpu) 	   (cpu->F |= (1 << FLAG_SIGN_BIT))    // S
+#define SET_FLAG_ZERO(cpu) 	   (cpu->F |= (1 << FLAG_ZERO_BIT))    // Z
+#define SET_FLAG_HCARRY(cpu)   (cpu->F |= (1 << FLAG_HCARRY_BIT))  // H
+#define SET_FLAG_PARITY(cpu)   (cpu->F |= (1 << FLAG_PARITY_BIT))  // P/V
+#define SET_FLAG_ADDSUB(cpu)   (cpu->F |= (1 << FLAG_ADDSUB_BIT))  // N
+#define SET_FLAG_CARRY(cpu)    (cpu->F |= (1 << FLAG_CARRY_BIT))   // C
+
+#define RESET_FLAG_SIGN(cpu)   (cpu->F &= ~(1 << FLAG_SIGN_BIT))   // S
+#define RESET_FLAG_ZERO(cpu)   (cpu->F &= ~(1 << FLAG_ZERO_BIT))   // Z
+#define RESET_FLAG_HCARRY(cpu) (cpu->F &= ~(1 << FLAG_HCARRY_BIT)) // H
+#define RESET_FLAG_PARITY(cpu) (cpu->F &= ~(1 << FLAG_PARITY_BIT)) // P/V
+#define RESET_FLAG_ADDSUB(cpu) (cpu->F &= ~(1 << FLAG_ADDSUB_BIT)) // N
+#define RESET_FLAG_CARRY(cpu)  (cpu->F &= ~(1 << FLAG_CARRY_BIT))  // C
 
 // Interrupt mode codes.
 #define INT_MODE_0      0

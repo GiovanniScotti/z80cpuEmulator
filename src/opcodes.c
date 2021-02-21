@@ -3,6 +3,15 @@
 #include "opcodes.h"
 #include "logger.h"
 
+#define FASTSWAP(X1,X2) X1 ^= X2; X2 ^= X1; X1 ^= X2
+
+
+typedef enum {
+    REG16_QQ = 0,
+    REG16_DD = 1
+} reg16_t;
+
+
 /*
   TODO: Interrupts must be recognized during LDIR instruction iterations.
   TODO: Check 16-bit arithmetic instructions
@@ -22,52 +31,63 @@ uint16_t opc_fetch16(cpu_t *cpu) {
 }
 
 
-// *****************************************************
-// *****    STATUS REGISTER - SUPPORT FUNCTIONS    *****
-// *****************************************************
+///////////////////////////////////////////////////////////
+// SUPPORT FUNCTIONS
+///////////////////////////////////////////////////////////
+
+// Tests if the given byte is negative.
+static bool opc_isNegative8(uint8_t val) {
+    return ((val >> 7) == 1);
+}
+
+
+// Tests if the given 16-bit value is negative.
+static bool opc_isNegative16(uint16_t val) {
+    return ((val >> 15) == 1);
+}
+
+
+// Tests the given 8-bit value and sets Z flag accordingly.
+static void opc_testZFlag8(cpu_t *cpu, uint8_t val) {
+    if (val == 0)
+        SET_FLAG_ZERO(cpu);
+    else
+        RESET_FLAG_ZERO(cpu);
+    return;
+}
+
+
+// Tests the given 16-bit value and sets Z flag accordingly.
+static void opc_testZFlag8(cpu_t *cpu, uint16_t val) {
+    if (val == 0)
+        SET_FLAG_ZERO(cpu);
+    else
+        RESET_FLAG_ZERO(cpu);
+    return;
+}
+
+
+// Tests the given 8-bit value and sets S flag accordingly.
+static void opc_testSFlag8(cpu_t *cpu, uint8_t val) {
+    if (opc_isNegative8(val))
+        SET_FLAG_SIGN(cpu);
+    else
+        RESET_FLAG_SIGN(cpu);
+    return;
+}
+
+
+// Tests the given 16-bit value and sets S flag accordingly.
+static void opc_testSFlag16(cpu_t *cpu, uint16_t val) {
+    if (opc_isNegative16(val))
+        SET_FLAG_SIGN(cpu);
+    else
+        RESET_FLAG_SIGN(cpu);
+    return;
+}
+
+
 /*
-// Test if the two's complemented passed value is negative
-int isNegative(u8 val) {
-  if(val & 0x80)
-    return 1;
-  else
-    return 0;
-}
-
-
-void rstAddSub() {
-  z80.F &= ~(FLAG_ADDSUB);
-}
-
-
-void setAddSub() {
-  z80.F |= FLAG_ADDSUB;
-}
-
-
-void testZero_8(u8 val) {
-  if(val == 0) z80.F |= FLAG_ZERO;
-  else         z80.F &= ~(FLAG_ZERO);
-}
-
-
-void testZero_16(u16 val) {
-  if(val == 0) z80.F |= FLAG_ZERO;
-  else         z80.F &= ~(FLAG_ZERO);
-}
-
-
-void testSign_8(u8 val) {
-  if(isNegative(val)) z80.F |= FLAG_SIGN;
-  else                z80.F &= ~(FLAG_SIGN);
-}
-
-
-void testSign_16(u16 val) {
-  if(val & 0x8000) z80.F |= FLAG_SIGN;
-  else             z80.F &= ~(FLAG_SIGN);
-}
-
 
 void testHalfCarry_8(u8 val1, u8 val2, u8 carry) {
   if((((val1 & 0x0F) + (val2 & 0x0F) + (carry & 0x0F)) & 0x10) == 0x10) {
@@ -200,6 +220,46 @@ static uint8_t opc_readReg(cpu_t *cpu, uint8_t reg) {
 }
 
 
+// Writes data into a 16-bit register.
+static void opc_writeReg16(cpu_t *cpu, uint8_t reg, uint16_t value, reg16_t type) {
+    switch(reg) {
+        case 0x00:
+            cpu->BC = value; break;
+        case 0x01:
+            cpu->DE = value; break;
+        case 0x02:
+            cpu->HL = value; break;
+        case 0x03:
+            if (type == REG16_DD) {cpu->SP = value; break;}
+            if (type == REG16_QQ) {cpu->AF = value; break;}
+        default:
+            LOG_FATAL("Cannot write to unknown register (0x%02X).\n", reg);
+            exit(1);
+    }
+    return;
+}
+
+
+// Reads data from a 16-bit register.
+static uint16_t opc_readReg16(cpu_t *cpu, uint8_t reg, reg16_t type) {
+    switch(reg) {
+        case 0x00:
+            return cpu->BC;
+        case 0x01:
+            return cpu->DE;
+        case 0x02:
+            return cpu->HL;
+        case 0x03:
+            if (type == REG16_DD) return cpu->SP;
+            if (type == REG16_QQ) return cpu->AF;
+        default:
+            LOG_FATAL("Cannot read unknown register (0x%02X).\n", reg);
+            exit(1);
+    }
+    return 0; // Never reached.
+}
+
+
 // Returns a string carrying the name of the given 8-bit register.
 static char * opc_regName8(uint8_t reg) {
     switch(reg) {
@@ -224,29 +284,25 @@ static char * opc_regName8(uint8_t reg) {
     return ""; // Never reached.
 }
 
-/*
 
-// Log accessed 16-bit register for debugging
-void logReg16(u8 index, int af_flag) {
-  switch(index) {
-    case 0x00:
-      writeLog("BC"); break;
-    case 0x01:
-      writeLog("DE"); break;
-    case 0x02:
-      writeLog("HL"); break;
-    case 0x03:
-      if(af_flag)
-        writeLog("AF");
-      else writeLog("SP");
-      break;
-    default:
-      die("[ERROR] Unable to log a non-existing pair of registers.\n");
-  }
+// Returns a string carrying the name of the given 16-bit register.
+static char * opc_regName16(uint8_t reg, reg16_t type) {
+    switch(reg) {
+        case 0x00:
+            return "BC";
+        case 0x01:
+            return "DE";
+        case 0x02:
+            return "HL";
+        case 0x03:
+            if (type == REG16_DD) return "SP";
+            if (type == REG16_QQ) return "AF";
+        default:
+            LOG_FATAL("Unknown register (0x%02X).\n", reg);
+            exit(1);
+    }
+    return ""; // Never reached.
 }
-
-*/
-
 
 
 ///////////////////////////////////////////////////////////
@@ -298,105 +354,82 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         LOG_DEBUG("Executed LD %s,(IX+d) IX+d=0x%04X\n", opc_regName8(dst), addr);
     }
 
-  // This is LD (IX+d), r instruction
-  else if((follByte & 0xF8) == 0x70) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u16 offset = z80.IX + extended_d;
-    u8 src = (follByte & 0x07);
-    u8 val = readReg(src);
-    writeByte(val, offset);
-    if(logInstr) {
-      writeLog("LD (IX+d), "); logReg8(src); fprintf(fpLog, "\t\tIX+d = %04X\n", offset);
+    // LD (IX+d),r instruction.
+    else if ((next_opc & 0xF8) == 0x70) {
+        uint8_t src = (next_opc & 0x07);
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = opc_readReg(cpu, src);
+        cpu_write(cpu, data, addr);
+        LOG_DEBUG("Executed LD (IX+d),%s IX+d=0x%04X\n", addr, opc_regName8(src));
     }
-  }
 
-  // This is LD (IX+d), n instruction
-  else if(follByte == 0x36) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 n = fetch8();
-    u16 offset = z80.IX + extended_d;
-    writeByte(n, offset);
-    if(logInstr) {
-      fprintf(fpLog, "LD (IX+d), n\t\tIX+d = %04X, n = %02X\n", offset, n);
+    // LD (IX+d),n instruction.
+    else if (next_opc == 0x36) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint8_t n = opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        cpu_write(cpu, n, addr);
+        LOG_DEBUG("Executed LD (IX+d),0x%02X IX+d=0x%04X\n", n, addr);
     }
-  }
 
-  // This is LD IX, nn instruction
-  else if(follByte == 0x21) {
-    opTbl[0xDD].TStates = 14;
-    u16 nn = fetch16();
-    z80.IX = nn;
-    if(logInstr) {
-      fprintf(fpLog, "LD IX, nn\t\tnn = %04X\n", nn);
+    // LD IX,nn instruction.
+    else if (next_opc == 0x21) {
+        opc_tbl[0xDD].TStates = 14;
+        uint16_t nn = opc_fetch16(cpu);
+        cpu->IX = nn;
+        LOG_DEBUG("Executed LD IX,0x%04X\n", nn);
     }
-  }
 
-  // This is LD IX, (nn) instruction
-  else if(follByte == 0x2A) {
-    opTbl[0xDD].TStates = 20;
-    u16 offset = fetch16();
-    z80.IX = (readByte(offset) | (readByte(offset + 1) << 8));
-    if(logInstr) {
-      fprintf(fpLog, "LD IX, (nn)\t\tnn = %04X\n", offset);
+    // LD IX,(nn) instruction.
+    else if (next_opc == 0x2A) {
+        opc_tbl[0xDD].TStates = 20;
+        uint16_t addr = opc_fetch16(cpu);
+        cpu->IX = (cpu_read(cpu, addr) | (cpu_read(cpu, addr + 1) << 8));
+        LOG_DEBUG("Executed LD IX,(0x%04X)\n", addr);
     }
-  }
 
-  // This is LD (nn), IX instruction
-  else if(follByte == 0x22) {
-    opTbl[0xDD].TStates = 20;
-    u16 offset = fetch16();
-    writeByte((z80.IX >> 8) & 0x00FF, offset + 1);  // (nn+1) <- IXh
-    writeByte(z80.IX & 0x00FF, offset);             // (nn) <- IXl
-    if(logInstr) {
-      fprintf(fpLog, "LD (nn), IX\t\tnn = %04X\n", offset);
+    // LD (nn),IX instruction.
+    else if (next_opc == 0x22) {
+        opc_tbl[0xDD].TStates = 20;
+        uint16_t addr = opc_fetch16(cpu);
+        cpu_write(cpu, (cpu->IX & 0xFF), addr);
+        cpu_write(cpu, ((cpu->IX >> 8) & 0xFF), addr + 1);
+        LOG_DEBUG("Executed LD (0x%04X),IX\n", addr);
     }
-  }
 
-  // This is LD SP, IX instruction
-  else if(follByte == 0xF9) {
-    opTbl[0xDD].TStates = 10;
-    z80.SP = z80.IX;
-    if(logInstr) {
-      fprintf(fpLog, "LD SP, IX\t\tIX = %04X\n", z80.IX);
+    // LD SP,IX instruction.
+    else if (next_opc == 0xF9) {
+        opc_tbl[0xDD].TStates = 10;
+        cpu->SP = cpu->IX;
+        LOG_DEBUG("Executed LD SP,IX\n");
     }
-  }
 
-  // This is PUSH IX instruction
-  else if(follByte == 0xE5) {
-    opTbl[0xDD].TStates = 15;
-    stackPush(z80.IX);
-    if(logInstr) {
-      writeLog("PUSH IX\n");
+    // PUSH IX instruction.
+    else if (next_opc == 0xE5) {
+        opc_tbl[0xDD].TStates = 15;
+        cpu_stackPush(cpu, cpu->IX);
+        LOG_DEBUG("Executed PUSH IX\n");
     }
-  }
 
-  // This is POP IX instruction
-  else if(follByte == 0xE1) {
-    opTbl[0xDD].TStates = 14;
-    z80.IX = stackPop();
-    if(logInstr) {
-      writeLog("POP IX\n");
+    // POP IX instruction.
+    else if (next_opc == 0xE1) {
+        opc_tbl[0xDD].TStates = 14;
+        cpu->IX = cpu_stackPop(cpu);
+        LOG_DEBUG("POP IX\n");
     }
-  }
 
-  // This is EX (SP), IX instruction
-  else if(follByte == 0xE3) {
-    opTbl[0xDD].TStates = 23;
-    u8 valSP  = readByte(z80.SP);
-    u8 valSPH = readByte(z80.SP + 1);
-    writeByte(z80.IX & 0x00FF, z80.SP);
-    writeByte((z80.IX >> 8) & 0x00FF, z80.SP + 1);
-    z80.IX = (valSP | (valSPH << 8));
-    if(logInstr) {
-      writeLog("EX (SP), IX"); fprintf(fpLog, "\t\tSP = %04X\n", z80.SP);
+    // EX (SP),IX instruction.
+    else if (next_opc == 0xE3) {
+        opc_tbl[0xDD].TStates = 23;
+        uint8_t valSPL = cpu_read(cpu, cpu->SP);
+        uint8_t valSPH = cpu_read(cpu, cpu->SP + 1);
+        cpu_write(cpu, (cpu->IX & 0xFF), cpu->SP);
+        cpu_write(cpu, ((cpu->IX >> 8) & 0xFF), cpu->SP + 1);
+        cpu->IX = (valSPL | (valSPH << 8));
+        LOG_DEBUG("Executed EX (SP),IX SP=0x%04X\n", cpu->SP);
+        return;
     }
-  }
 
   // This is ADD A, (IX+d) instruction
   else if(follByte == 0x86) {
@@ -926,124 +959,96 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-void LDIY(cpu_t *cpu, uint8_t opcode) {
-  opTbl[0xFD].TStates = 19;
-  u8 follByte = fetch8();
+static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
+    opc_tbl[0xFD].TStates = 19;
+    uint8_t next_opc = opc_fetch8(cpu);
 
-  // This is the LD r, (IY+d) instruction
-  if((follByte & 0xC7) == 0x46) {
-    u8 dst = ((follByte >> 3) & 0x07);
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u16 offset = z80.IY + extended_d;
-    u8 val = readByte(offset);
-    writeReg(val, dst);
-    if(logInstr) {
-      writeLog("LD "); logReg8(dst); fprintf(fpLog, ", (IY+d)\t\tIY+d = %04X\n", offset);
+    // LD r,(IY+d) instruction.
+    if ((next_opc & 0xC7) == 0x46) {
+        uint8_t dst = ((next_opc >> 3) & 0x07);
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        opc_writeReg(cpu, dst, data);
+        LOG_DEBUG("Executed LD %s,(IY+d) IY+d=0x%04X\n", opc_regName8(dst), addr);
     }
-  }
 
-  // This is LD (IY+d), r instruction
-  else if((follByte & 0xF8) == 0x70) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u16 offset = z80.IY + extended_d;
-    u8 src = (follByte & 0x07);
-    u8 val = readReg(src);
-    writeByte(val, offset);
-    if(logInstr) {
-      writeLog("LD (IY+d), "); logReg8(src); fprintf(fpLog, "\t\tIY+d = %04X\n", offset);
+    // LD (IY+d),r instruction.
+    else if ((next_opc & 0xF8) == 0x70) {
+        uint8_t src = (next_opc & 0x07);
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = opc_readReg(cpu, src);
+        cpu_write(cpu, data, addr);
+        LOG_DEBUG("Executed LD (IY+d),%s IY+d=0x%04X\n", addr, opc_regName8(src));
     }
-  }
 
-  // This is LD (IY+d), n instruction
-  else if(follByte == 0x36) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 n = fetch8();
-    u16 offset = z80.IY + extended_d;
-    writeByte(n, offset);
-    if(logInstr) {
-      fprintf(fpLog, "LD (IY+d), n\t\tIY+d = %04X, n = %02X\n", offset, n);
+    // LD (IY+d),n instruction.
+    else if (next_opc == 0x36) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint8_t n = opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        cpu_write(cpu, n, addr);
+        LOG_DEBUG("Executed LD (IY+d),0x%02X IY+d=0x%04X\n", n, addr);
     }
-  }
 
-  // This is LD IY, nn instruction
-  else if(follByte == 0x21) {
-    opTbl[0xFD].TStates = 14;
-    u16 nn = fetch16();
-    z80.IY = nn;
-    if(logInstr) {
-      fprintf(fpLog, "LD IY, nn\t\tnn = %04X\n", nn);
+    // LD IY,nn instruction.
+    else if (next_opc == 0x21) {
+        opc_tbl[0xDD].TStates = 14;
+        uint16_t nn = opc_fetch16(cpu);
+        cpu->IY = nn;
+        LOG_DEBUG("Executed LD IY,0x%04X\n", nn);
     }
-  }
 
-  // This is LD IY, (nn) instruction
-  else if(follByte == 0x2A) {
-    opTbl[0xFD].TStates = 20;
-    u16 offset = fetch16();
-    z80.IY = (readByte(offset) | (readByte(offset + 1) << 8));
-    if(logInstr) {
-      fprintf(fpLog, "LD IY, (nn)\t\tnn = %04X\n", offset);
+    // LD IY,(nn) instruction.
+    else if (next_opc == 0x2A) {
+        opc_tbl[0xDD].TStates = 20;
+        uint16_t addr = opc_fetch16(cpu);
+        cpu->IY = (cpu_read(cpu, addr) | (cpu_read(cpu, addr + 1) << 8));
+        LOG_DEBUG("Executed LD IY,(0x%04X)\n", addr);
     }
-  }
 
-  // This is LD (nn), IY instruction
-  else if(follByte == 0x22) {
-    opTbl[0xFD].TStates = 20;
-    u16 offset = fetch16();
-    writeByte((z80.IY >> 8) & 0x00FF, offset + 1);  // (nn+1) <- IYh
-    writeByte(z80.IY & 0x00FF, offset);             // (nn) <- IYl
-    if(logInstr) {
-      fprintf(fpLog, "LD (nn), IY\t\tnn = %04X\n", offset);
+    // LD (nn),IY instruction.
+    else if (next_opc == 0x22) {
+        opc_tbl[0xDD].TStates = 20;
+        uint16_t addr = opc_fetch16(cpu);
+        cpu_write(cpu, (cpu->IY & 0xFF), addr);
+        cpu_write(cpu, ((cpu->IY >> 8) & 0xFF), addr + 1);
+        LOG_DEBUG("Executed LD (0x%04X),IY\n", addr);
     }
-  }
 
-  // This is LD SP, IY instruction
-  else if(follByte == 0xF9) {
-    opTbl[0xFD].TStates = 10;
-    z80.SP = z80.IY;
-    if(logInstr) {
-      fprintf(fpLog, "LD SP, IY\t\tIY = %04X\n", z80.IY);
+    // LD SP,IY instruction.
+    else if (next_opc == 0xF9) {
+        opc_tbl[0xDD].TStates = 10;
+        cpu->SP = cpu->IY;
+        LOG_DEBUG("Executed LD SP,IY\n");
     }
-  }
 
-  // This is PUSH IY instruction
-  else if(follByte == 0xE5) {
-    opTbl[0xFD].TStates = 15;
-    stackPush(z80.IY);
-    if(logInstr) {
-      writeLog("PUSH IY\n");
+    // PUSH IY instruction.
+    else if (next_opc == 0xE5) {
+        opc_tbl[0xDD].TStates = 15;
+        cpu_stackPush(cpu, cpu->IY);
+        LOG_DEBUG("Executed PUSH IY\n");
     }
-  }
 
-  // This is POP IY instruction
-  else if(follByte == 0xE1) {
-    opTbl[0xFD].TStates = 14;
-    z80.IY = stackPop();
-    if(logInstr) {
-      writeLog("POP IY\n");
+    // POP IY instruction.
+    else if (next_opc == 0xE1) {
+        opc_tbl[0xDD].TStates = 14;
+        cpu->IY = cpu_stackPop(cpu);
+        LOG_DEBUG("POP IY\n");
     }
-  }
 
-  // This is EX (SP), IY instruction
-  else if(follByte == 0xE3) {
-    opTbl[0xFD].TStates = 23;
-    u8 valSP  = readByte(z80.SP);
-    u8 valSPH = readByte(z80.SP + 1);
-    writeByte(z80.IY & 0x00FF, z80.SP);
-    writeByte((z80.IY >> 8) & 0x00FF, z80.SP + 1);
-    z80.IY = (valSP | (valSPH << 8));
-    if(logInstr) {
-      writeLog("EX (SP), IY"); fprintf(fpLog, "\t\tSP = %04X\n", z80.SP);
+    // EX (SP),IY instruction.
+    else if (next_opc == 0xE3) {
+        opc_tbl[0xDD].TStates = 23;
+        uint8_t valSPL = cpu_read(cpu, cpu->SP);
+        uint8_t valSPH = cpu_read(cpu, cpu->SP + 1);
+        cpu_write(cpu, (cpu->IY & 0xFF), cpu->SP);
+        cpu_write(cpu, ((cpu->IY >> 8) & 0xFF), cpu->SP + 1);
+        cpu->IY = (valSPL | (valSPH << 8));
+        LOG_DEBUG("Executed EX (SP),IY SP=0x%04X\n", cpu->SP);
+        return;
     }
-  }
 
   // This is ADD A, (IY+d) instruction
   else if(follByte == 0x86){
@@ -1573,314 +1578,265 @@ void LDIY(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is LD (HL), r instruction
-void LDHLr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 srcVal = readReg(src);
-  writeByte(srcVal, z80.HL);
-  if(logInstr) {
-    writeLog("LD (HL), "); logReg8(src); fprintf(fpLog, "\t\tHL = %04X\n", z80.HL);
-  }
+// LD (HL),r instruction.
+static void opc_LDHLr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    cpu_write(cpu, data, cpu->HL);
+    LOG_DEBUG("Executed LD (HL),%s HL=0x%04X\n", cpu->HL, opc_regName8(src));
+    return;
 }
 
 
-// This is LD (HL), n instruction
-void LDHLn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  writeByte(n, z80.HL);
-  if(logInstr) {
-    fprintf(fpLog, "LD (HL), n\t\tHL = %04X, n = %02X\n", z80.HL, n);
-  }
+// LD (HL),n instruction.
+static void opc_LDHLn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    cpu_write(cpu, n, cpu->HL);
+    LOG_DEBUG("Executed LD (HL),0x%02X HL=0x%04X\n", n, cpu->HL);
+    return;
 }
 
 
-// This is LD A, (BC) instruction
-void LDABC(cpu_t *cpu, uint8_t opcode) {
-  z80.A = readByte(z80.BC);
-  if(logInstr) {
-    fprintf(fpLog, "LD A, (BC)\t\tBC = %04X\n", z80.BC);
-  }
+// LD A,(BC) instruction.
+static void opc_LDABC(cpu_t *cpu, uint8_t opcode) {
+    cpu->A = cpu_read(cpu, cpu->BC);
+    LOG_DEBUG("Executed LD A,(BC) BC=0x%04X\n", cpu->BC);
+    return;
 }
 
 
-// This is LD A, (DE) instruction
-void LDADE(cpu_t *cpu, uint8_t opcode) {
-  z80.A = readByte(z80.DE);
-  if(logInstr) {
-    fprintf(fpLog, "LD A, (DE)\t\tDE = %04X\n", z80.DE);
-  }
+// LD A,(DE) instruction.
+static void opc_LDADE(cpu_t *cpu, uint8_t opcode) {
+    cpu->A = cpu_read(cpu, cpu->DE);
+    LOG_DEBUG("Executed LD A,(DE) DE=0x%04X\n", cpu->DE);
+    return;
 }
 
 
-// This is LD A, (nn) instruction
-void LDAnn(cpu_t *cpu, uint8_t opcode) {
-  u16 offset = fetch16();
-  z80.A = readByte(offset);
-  if(logInstr) {
-    fprintf(fpLog, "LD A, (nn)\t\tnn = %04X\n", offset);
-  }
+// LD A,(nn) instruction.
+static void opc_LDAnn(cpu_t *cpu, uint8_t opcode) {
+    uint16_t addr = opc_fetch16(cpu);
+    cpu->A = cpu_read(cpu, addr);
+    LOG_DEBUG("Executed LD A,(0x%04X)\n", addr);
+    return;
 }
 
 
-// This is LD (BC), A
-void LDBCA(cpu_t *cpu, uint8_t opcode) {
-  writeByte(z80.A, z80.BC);
-  if(logInstr) {
-    fprintf(fpLog, "LD (BC), A\t\tBC = %04X\n", z80.BC);
-  }
+// LD (BC),A instruction.
+static void opc_LDBCA(cpu_t *cpu, uint8_t opcode) {
+    cpu_write(cpu, cpu->A, cpu->BC);
+    LOG_DEBUG("Executed LD (BC),A BC=0x%04X\n", cpu->BC);
+    return;
 }
 
 
-// This is LD (DE), A
-void LDDEA(cpu_t *cpu, uint8_t opcode) {
-  writeByte(z80.A, z80.DE);
-  if(logInstr) {
-    fprintf(fpLog, "LD (DE), A\t\tDE = %04X\n", z80.DE);
-  }
+// LD (DE),A instruction.
+static void opc_LDDEA(cpu_t *cpu, uint8_t opcode) {
+    cpu_write(cpu, cpu->A, cpu->DE);
+    LOG_DEBUG("Executed LD (DE),A DE=0x%04X\n", cpu->DE);
+    return;
 }
 
 
-// This is LD (nn), A
-void LDnnA(cpu_t *cpu, uint8_t opcode) {
-  u16 offset = fetch16();
-  writeByte(z80.A, offset);
-  if(logInstr) {
-    fprintf(fpLog, "LD (nn), A\t\tnn = %04X\n", offset);
-  }
+// LD (nn),A instruction.
+static void opc_LDnnA(cpu_t *cpu, uint8_t opcode) {
+    uint16_t addr = opc_fetch16(cpu);
+    cpu_write(cpu, cpu->A, addr);
+    LOG_DEBUG("Executed LD (0x%04X),A\n", addr);
+    return;
 }
 
 
-void LDRIddnn(cpu_t *cpu, uint8_t opcode) {
-  opTbl[0xED].TStates = 9;
-  u8 follByte = fetch8();
+static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
+    opc_tbl[0xED].TStates = 9;
+    uint8_t next_opc = opc_fetch8(cpu);
 
-  // This is LD A, I instruction
-  if(follByte == 0x57) {
-    z80.A = z80.I;
-    // Condition bits
-    if(isNegative(z80.I))
-      z80.F |= FLAG_SIGN;
-    else
-      z80.F &= ~(FLAG_SIGN);
+    // LD A,I instruction.
+    if (next_opc == 0x57) {
+        cpu->A = cpu->I;
+        // Condition bits are affected.
+        if (opc_isNegative8(cpu->I))
+            SET_FLAG_SIGN(cpu);
+        else
+            RESET_FLAG_SIGN(cpu);
 
-    if(z80.I == 0x00)
-      z80.F |= FLAG_ZERO;
-    else
-      z80.F &= ~(FLAG_ZERO);
+        if (cpu->I == 0)
+            SET_FLAG_ZERO(cpu);
+        else
+            RESET_FLAG_ZERO(cpu);
 
-    z80.F &= ~(FLAG_ADDSUB | FLAG_HCARRY);
-    if(z80.IFF2 & 0x01)
-      z80.F |= FLAG_PARITY;
-    else
-      z80.F &= ~(FLAG_PARITY);
-    if(logInstr) {
-      writeLog("LD A, I");
-    }
-  }
+        RESET_FLAG_HCARRY(cpu);
+        RESET_FLAH_ADDSUB(cpu);
 
-  // This is LD A, R instruction
-  else if(follByte == 0x5F) {
-    z80.A = z80.R;
+        if (cpu->IFF2)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
 
-    // Condition bits
-    if(isNegative(z80.R))
-      z80.F |= FLAG_SIGN;
-    else
-      z80.F &= ~(FLAG_SIGN);
-
-    if(z80.R == 0x00)
-      z80.F |= FLAG_ZERO;
-    else
-      z80.F &= ~(FLAG_ZERO);
-
-    z80.F &= ~(FLAG_ADDSUB | FLAG_HCARRY);
-    if(z80.IFF2 & 0x01)
-      z80.F |= FLAG_PARITY;
-    else
-      z80.F &= ~(FLAG_PARITY);
-    if(logInstr) {
-      writeLog("LD A, R");
-    }
-  }
-
-  // This is LD I, A instruction
-  else if(follByte == 0x47) {
-    z80.I = z80.A;
-    if(logInstr) {
-      writeLog("LD I, A");
-    }
-  }
-
-  // This is LD R, A instruction
-  else if(follByte == 0x4F) {
-    z80.R = z80.A;
-    if(logInstr) {
-      writeLog("LD R, A");
-    }
-  }
-
-  // This is LD dd, (nn)
-  else if((follByte & 0xCF) == 0x4B) {
-    opTbl[0xED].TStates = 20;
-    u8 dst = ((follByte >> 4) & 0x03);
-    u16 offset = fetch16();
-    u16 res = (readByte(offset) | (readByte(offset + 1) << 8));
-    switch(dst) {
-      case 0x00:
-        z80.BC = res;
-        break;
-      case 0x01:
-        z80.DE = res;
-        break;
-      case 0x02:
-        z80.HL = res;
-        break;
-      case 0x03:
-        z80.SP = res;
-        break;
-      default:
-        die("[ERROR] Wrong destination register for LD dd, (nn) instruction.\n");
-    }
-    if(logInstr) {
-      writeLog("LD "); logReg16(dst, 0); fprintf(fpLog, ", (nn)\t\tnn = %04X\n", offset);
-    }
-  }
-
-  // This is LD (nn), dd
-  else if((follByte & 0xCF) == 0x43) {
-    opTbl[0xED].TStates = 20;
-    u8 src = ((follByte >> 4) & 0x03);
-    u16 offset = fetch16();
-    switch(src) {
-      case 0x00:
-        writeByte(z80.B, offset + 1);
-        writeByte(z80.C, offset);
-        break;
-      case 0x01:
-        writeByte(z80.D, offset + 1);
-        writeByte(z80.E, offset);
-        break;
-      case 0x02:
-        writeByte(z80.H, offset + 1);
-        writeByte(z80.L, offset);
-        break;
-      case 0x03:
-        writeByte((z80.SP >> 8) & 0x00FF, offset + 1);
-        writeByte(z80.SP & 0x00FF, offset);
-        break;
-      default:
-        die("[ERROR] Wrong source register for LD (nn), dd instruction.\n");
-    }
-    if(logInstr) {
-      writeLog("LD (nn), "); logReg16(src, 0); fprintf(fpLog, "\t\tnn = %04X\n", offset);
-    }
-  }
-
-  // This is LDI instruction
-  else if(follByte == 0xA0) {
-    opTbl[0xED].TStates = 16;
-    u8 valueHL = readByte(z80.HL);
-    writeByte(valueHL, z80.DE);
-    z80.DE++;
-    z80.HL++;
-    z80.BC--;
-    z80.F &= ~(FLAG_HCARRY | FLAG_ADDSUB); // Reset H and N
-    // P/V is set if BC-1 != 0
-    if(z80.BC == 0) {
-      z80.F &= ~(FLAG_PARITY); // Reset parity bit
-    }
-    else z80.F |= FLAG_PARITY;
-    if(logInstr) {
-      writeLog("LDI\n");
-    }
-  }
-
-  // This is LDIR instruction
-  else if(follByte == 0xB0) {
-    u8 valueHL = readByte(z80.HL);
-    writeByte(valueHL, z80.DE);
-    z80.DE++;
-    z80.HL++;
-    z80.BC--;
-    z80.F &= ~(FLAG_HCARRY | FLAG_ADDSUB | FLAG_PARITY); // Reset H, N and P/V
-
-    if(z80.BC != 0) {
-      z80.PC -= 2;
-      opTbl[0xED].TStates = 21;
-    }
-    else {
-      opTbl[0xED].TStates = 16;
-    }
-    if(logInstr) {
-      writeLog("LDIR\n");
-    }
-  }
-
-  // This is LDD instruction
-  else if(follByte == 0xA8) {
-    opTbl[0xED].TStates = 16;
-    u8 valueHL = readByte(z80.HL);
-    writeByte(valueHL, z80.DE);
-    z80.DE--;
-    z80.HL--;
-    z80.BC--;
-    z80.F &= ~(FLAG_HCARRY | FLAG_ADDSUB); // Reset H and N
-    // P/V is set if BC-1 != 0
-    if(z80.BC == 0) {
-      z80.F &= ~(FLAG_PARITY); // Reset parity bit
-    }
-    else z80.F |= FLAG_PARITY;
-    if(logInstr) {
-      writeLog("LDD\n");
-    }
-  }
-
-  // This is LDDR instruction
-  else if(follByte == 0xB8) {
-    u8 valueHL = readByte(z80.HL);
-    writeByte(valueHL, z80.DE);
-    z80.DE--;
-    z80.HL--;
-    z80.BC--;
-    z80.F &= ~(FLAG_HCARRY | FLAG_ADDSUB | FLAG_PARITY); // Reset H, N and P/V
-
-    if(z80.BC != 0) {
-      z80.PC -= 2;
-      opTbl[0xED].TStates = 21;
-    }
-    else {
-      opTbl[0xED].TStates = 16;
-    }
-    if(logInstr) {
-      writeLog("LDDR\n");
-    }
-  }
-
-  // This is CPI instruction
-  else if(follByte == 0xA1) {
-    opTbl[0xED].TStates = 16;
-    u8 valueHL = readByte(z80.HL);
-    u8 complHL = ~valueHL + 1;
-    u8 tmp = z80.A + complHL; // Perform subtraction
-    z80.HL++;
-    z80.BC--;
-
-    testZero_8(tmp);
-    testSign_8(tmp);
-    testHalfCarry_8(z80.A, complHL, 0);
-    setAddSub();
-
-    if(z80.BC == 0) {
-      z80.F &= ~(FLAG_PARITY);
-    }
-    else {
-      z80.F |= FLAG_PARITY;
+        LOG_DEBUG("Executed LD A,I\n");
     }
 
-    if(logInstr) {
-      writeLog("CPI\n");
+    // LD A,R instruction.
+    else if (next_opc == 0x5F) {
+        cpu->A = cpu->R;
+        // Condition bits are affected.
+        if (opc_isNegative8(cpu->R))
+            SET_FLAG_SIGN(cpu);
+        else
+            RESET_FLAG_SIGN(cpu);
+
+        if (cpu->R == 0)
+            SET_FLAG_ZERO(cpu);
+        else
+            RESET_FLAG_ZERO(cpu);
+
+        RESET_FLAG_HCARRY(cpu);
+        RESET_FLAH_ADDSUB(cpu);
+
+        if (cpu->IFF2)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        LOG_DEBUG("Executed LD A,R\n");
     }
-  }
+
+    // LD I,A instruction.
+    else if (next_opc == 0x47) {
+        cpu->I = cpu->A;
+        LOG_DEBUG("Executed LD I,A\n");
+    }
+
+    // LD R,A instruction.
+    else if (next_opc == 0x4F) {
+        cpu->R = cpu->A;
+        LOG_DEBUG("Executed LD R,A\n");
+    }
+
+    // LD dd, (nn) instruction.
+    else if ((next_opc & 0xCF) == 0x4B) {
+        opc_tbl[0xED].TStates = 20;
+        uint8_t dst = ((next_opc >> 4) & 0x03);
+        uint16_t addr = opc_fetch16(cpu);
+        uint16_t data = (cpu_read(cpu, addr) | (cpu_read(cpu, addr + 1) << 8));
+        opc_writeReg16(cpu, dst, data, REG16_DD);
+        LOG_DEBUG("Executed LD %s,(0x%04X)\n", opc_regName16(dst, REG16_DD), addr);
+    }
+
+    // LD (nn),dd instruction.
+    else if ((next_opc & 0xCF) == 0x43) {
+        opc_tbl[0xED].TStates = 20;
+        uint8_t src = ((next_opc >> 4) & 0x03);
+        uint16_t addr = opc_fetch16(cpu);
+        uint16_t data = opc_readReg16(cpu, src, REG16_DD);
+        cpu_write(cpu, (data & 0xFF), addr);
+        cpu_write(cpu, ((data >> 8) & 0xFF), addr + 1);
+        LOG_DEBUG("Executed LD (0x%04X),%s\n", addr, opc_regName16(src, REG16_DD));
+    }
+
+    // LDI instruction.
+    else if (next_opc == 0xA0) {
+        opc_tbl[0xED].TStates = 16;
+        uint8_t mem_HL = cpu_read(cpu, cpu->HL);
+        cpu_write(cpu, mem_HL, cpu->DE);
+        cpu->DE++;
+        cpu->HL++;
+        cpu->BC--;
+
+        RESET_FLAG_HCARRY(cpu);
+        RESET_FLAG_ADDSUB(cpu);
+        if (cpu->BC)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+        LOG_DEBUG("Executed LDI\n");
+    }
+
+    // LDIR instruction.
+    else if (next_opc == 0xB0) {
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        cpu_write(cpu, data, cpu->DE);
+        cpu->DE++;
+        cpu->HL++;
+        cpu->BC--;
+
+        RESET_FLAG_HCARRY(cpu);
+        RESET_FLAG_ADDSUB(cpu);
+        RESET_FLAG_PARITY(cpu);
+
+        if (cpu->BC) {
+            cpu->PC -= 2;
+            opc_tbl[0xED].TStates = 21;
+        } else
+            opc_tbl[0xED].TStates = 16;
+
+        LOG_DEBUG("Executed LDIR\n");
+        return;
+    }
+
+    // LDD instruction.
+    else if(follByte == 0xA8) {
+        opc_tbl[0xED].TStates = 16;
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        cpu_write(cpu, data, cpu->DE);
+        cpu->DE--;
+        cpu->HL--;
+        cpu->BC--;
+
+        RESET_FLAG_HCARRY(cpu);
+        RESET_FLAG_ADDSUB(cpu);
+        if (cpu->BC)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        LOG_DEBUG("Executed LDD\n");
+        return;
+    }
+
+    // LDDR instruction.
+    else if (next_opc == 0xB8) {
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        cpu_write(cpu, data, cpu->DE);
+        cpu->DE--;
+        cpu->HL--;
+        cpu->BC--;
+
+        RESET_FLAG_HCARRY(cpu);
+        RESET_FLAG_ADDSUB(cpu);
+        RESET_FLAG_PARITY(cpu);
+
+        if (cpu->BC) {
+            cpu->PC -= 2;
+            opc_tbl[0xED].TStates = 21;
+        } else
+            opc_tbl[0xED].TStates = 16;
+
+        LOG_DEBUG("Executed LDDR\n");
+        return;
+    }
+
+    // CPI instruction.
+    else if (next_opc == 0xA1) {
+        opc_tbl[0xED].TStates = 16;
+        uint8_t data_HL = cpu_read(cpu, cpu->HL);
+        uint8_t res = cpu->A - data_HL;
+        cpu->HL++;
+        cpu->BC--;
+
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data_HL, 0);
+
+        SET_FLAG_ADDSUB(cpu);
+        if (cpu->BC)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        LOG_DEBUG("Executed CPI\n");
+        return;
+    }
 
   // This is CPIR instruction
   else if(follByte == 0xB1) {
@@ -2207,154 +2163,98 @@ void LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is LD dd, nn instruction
-void LDddnn(cpu_t *cpu, uint8_t opcode) {
-  u8 dst = ((opcode >> 4) & 0x03);
-  u16 nn = fetch16();
-  switch(dst) {
-    case 0x00:
-      z80.BC = nn;
-      break;
-    case 0x01:
-      z80.DE = nn;
-      break;
-    case 0x02:
-      z80.HL = nn;
-      break;
-    case 0x03:
-      z80.SP = nn;
-      break;
-    default:
-      die("[ERROR] Wrong destination register for LD dd, nn instruction.\n");
-  }
-  if(logInstr) {
-    fprintf(fpLog, "LD "); logReg16(dst, 0); fprintf(fpLog, ", %04X\n", nn);
-  }
+// LD dd,nn instruction.
+static void opc_LDddnn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t dst = ((opcode >> 4) & 0x03);
+    uint16_t nn = opc_fetch16(cpu);
+    opc_writeReg16(cpu, dst, nn, REG16_DD);
+    LOG_DEBUG("Executed LD %s,0x%04X\n", opc_regName16(dst, REG16_DD), nn);
+    return;
 }
 
 
-// This is LD HL, (nn)
-void LDHLnn(cpu_t *cpu, uint8_t opcode) {
-  u16 offset = fetch16();
-  z80.L = readByte(offset);
-  z80.H = readByte(offset + 1);
-  if(logInstr) {
-    fprintf(fpLog, "LD HL, (nn)\t\tnn = %04X\n", offset);
-  }
+// LD HL,(nn) instruction.
+static void opc_LDHLnn(cpu_t *cpu, uint8_t opcode) {
+    uint16_t addr = opc_fetch16(cpu);
+    cpu->L = cpu_read(cpu, addr);
+    cpu->H = cpu_read(cpu, addr + 1);
+    LOG_DEBUG("Executed LD HL,(0x%04X)\n", addr);
+    return;
 }
 
 
-// This is LD (nn), HL
-void LDnnHL(cpu_t *cpu, uint8_t opcode) {
-  u16 offset = fetch16();
-  writeByte(z80.L, offset);
-  writeByte(z80.H, offset + 1);
-  if(logInstr) {
-    fprintf(fpLog, "LD (nn), HL\t\tnn = %04X\n", offset);
-  }
+// LD (nn),HL instruction.
+static void opc_LDnnHL(cpu_t *cpu, uint8_t opcode) {
+    uint16_t addr = opc_fetch16(cpu);
+    cpu_write(cpu, cpu->L, addr);
+    cpu_write(cpu, cpu->H, addr + 1);
+    LOG_DEBUG("Executed LD (0x%04X),HL\n", addr);
+    return;
 }
 
 
-// This is LD SP, HL instruction
-void LDSPHL(cpu_t *cpu, uint8_t opcode) {
-  z80.SP = z80.HL;
-  if(logInstr) {
-    writeLog("LD SP, HL\n");
-  }
+// LD SP,HL instruction.
+static void opc_LDSPHL(cpu_t *cpu, uint8_t opcode) {
+    cpu->SP = cpu->HL;
+    LOG_DEBUG("Executed LD SP,HL\n");
+    return;
 }
 
 
-// This is PUSH qq instruction
-void PUSHqq(cpu_t *cpu, uint8_t opcode) {
-  u8 src = ((opcode >> 4) & 0x03); // Isolate qq
-  switch(src) {
-    case 0x00:
-      stackPush(z80.BC);
-      break;
-    case 0x01:
-      stackPush(z80.DE);
-      break;
-    case 0x02:
-      stackPush(z80.HL);
-      break;
-    case 0x03:
-      stackPush(z80.AF);
-      break;
-    default:
-      die("[ERROR] Wrong operand for PUSH qq instruction.\n");
-  }
-  if(logInstr) {
-    writeLog("PUSH "); logReg16(src, 1); writeLog("\n");
-  }
+// PUSH qq instruction.
+static void opc_PUSHqq(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = ((opcode >> 4) & 0x03);
+    cpu_stackPush(cpu, opc_readReg16(cpu, src, REG16_QQ));
+    LOG_DEBUG("Executed PUSH %s\n", opc_regName16(src, REG16_QQ));
+    return;
 }
 
 
-// This is POP qq instruction
-void POPqq(cpu_t *cpu, uint8_t opcode) {
-  u8 dst = ((opcode >> 4) & 0x03); // Isolate qq
-  u16 popVal = stackPop();
-  switch(dst) {
-    case 0x00:
-      z80.BC = popVal;
-      break;
-    case 0x01:
-      z80.DE = popVal;
-      break;
-    case 0x02:
-      z80.HL = popVal;
-      break;
-    case 0x03:
-      z80.AF = popVal;
-      break;
-    default:
-      die("[ERROR] Wrong operand for POP qq instruction.\n");
-  }
-  if(logInstr) {
-    writeLog("POP "); logReg16(dst, 1); writeLog("\n");
-  }
+// POP qq instruction.
+static void opc_POPqq(cpu_t *cpu, uint8_t opcode) {
+    uint8_t dst = ((opcode >> 4) & 0x03);
+    opc_writeReg16(cpu, dst, cpu_stackPop(cpu), REG16_QQ);
+    LOG_DEBUG("Executed POP %s\n", opc_regName16(dst, REG16_QQ));
+    return;
 }
 
 
-// This is EX DE, HL instruction
-void EXDEHL(cpu_t *cpu, uint8_t opcode) {
-  FASTSWAP(z80.DE, z80.HL);
-  if(logInstr) {
-    writeLog("EX DE, HL\n");
-  }
+// EX DE,HL instruction.
+static void opc_EXDEHL(cpu_t *cpu, uint8_t opcode) {
+    FASTSWAP(cpu->DE, cpu->HL);
+    LOG_DEBUG("Executed EX DE,HL\n");
+    return;
 }
 
 
-// This is EX AF, AF' instruction
-void EXAFAFr(cpu_t *cpu, uint8_t opcode) {
-  FASTSWAP(z80.AF, z80.ArFr);
-  if(logInstr) {
-    writeLog("EX AF, AF'\n");
-  }
+// EX AF,AF' instruction.
+static void opc_EXAFAFr(cpu_t *cpu, uint8_t opcode) {
+    FASTSWAP(cpu->AF, cpu->ArFr);
+    LOG_DEBUG("Executed EX AF,AF'\n");
+    return;
 }
 
 
-// This is EXX instruction
-void EXX(cpu_t *cpu, uint8_t opcode) {
-  FASTSWAP(z80.BC, z80.BrCr);
-  FASTSWAP(z80.DE, z80.DrEr);
-  FASTSWAP(z80.HL, z80.HrLr);
-  if(logInstr) {
-    writeLog("EXX\n");
-  }
+// EXX instruction.
+static void opc_EXX(cpu_t *cpu, uint8_t opcode) {
+    FASTSWAP(cpu->BC, cpu->BrCr);
+    FASTSWAP(cpu->DE, cpu->DrEr);
+    FASTSWAP(cpu->HL, cpu->HrLr);
+    LOG_DEBUG("Executed EXX\n");
+    return;
 }
 
 
-// This is EX (SP), HL instruction
-void EXSPHL(cpu_t *cpu, uint8_t opcode) {
-  u8 valSP  = readByte(z80.SP);      // Byte at SP
-  u8 valSPH = readByte(z80.SP + 1);  // Byte at SP + 1
-  writeByte(z80.H, z80.SP + 1);
-  writeByte(z80.L, z80.SP);
-  z80.H = valSPH;
-  z80.L = valSP;
-  if(logInstr) {
-    fprintf(fpLog, "EX (SP), HL\t\tSP = %04X\n", z80.SP);
-  }
+// EX (SP),HL instruction.
+static void opc_EXSPHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t valSPL = cpu_read(cpu, cpu->SP);
+    uint8_t valSPH = cpu_read(cpu, cpu->SP + 1);
+    cpu_write(cpu, cpu->L, cpu->SP);
+    cpu_write(cpu, cpu->H, cpu->SP + 1);
+    cpu->H = valSPH;
+    cpu->L = valSPL;
+    LOG_DEBUG("Executed EX (SP),HL SP=0x%04X\n", cpu->SP);
+    return;
 }
 
 

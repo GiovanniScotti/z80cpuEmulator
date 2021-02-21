@@ -199,6 +199,8 @@ void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
         cpu->instr++;
         instr_count++;
 
+        // TODO: should we increment register R?
+
         // Detects interrupts at the end of instruction's execution.
         if (cpu->is_pendingInterrupt) {
             if (is_pendingNMI) {

@@ -4,7 +4,11 @@
 #include <stdint.h>
 #include "cpu.h"
 
-#define FASTSWAP(X1,X2) X1 ^= X2; X2 ^= X1; X1 ^= X2
+
+typedef struct {
+    void (*execute) (cpu_t *cpu, uint8_t opcode);
+    int32_t TStates;
+} opc_t;
 
 
 uint8_t opc_fetch8(cpu_t *cpu);
@@ -121,11 +125,5 @@ uint16_t opc_fetch16(cpu_t *cpu);
 // void opc_RSTp(cpu_t *cpu, uint8_t opcode);
 // void opc_INAn(cpu_t *cpu, uint8_t opcode);
 // void opc_OUTnA(cpu_t *cpu, uint8_t opcode);
-
-
-typedef struct {
-    void (*execute) (cpu_t *cpu, uint8_t opcode);
-    int32_t TStates;
-} opc_t;
 
 #endif // _OPCODES_H_
