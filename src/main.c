@@ -109,7 +109,6 @@ int main(int argc, char **argv) {
     logger_set_verbosity(debug_level);
     logger_open(logfile);
 
-
     // The user can use CTRL+C at any time to abort emulator execution.
     // The exitHandler takes care of gracefully close the program.
     struct sigaction sa;
@@ -140,24 +139,22 @@ int main(int argc, char **argv) {
     // TODO: how can we deallocate memory? raise() instead of exit and
     // cpu_destroy in exit handler?
 
-
+    // Memory configuration:
+    // 0x0000 - 0x7FFF -> ROM
+    // 0x8000 - 0xFFFF -> RAM
     mem_chunk_t ram = {"RAM", CHUNK_READWRITE, 0x8000, 0x8000, ram_buff, NULL};
     mem_chunk_t rom = {"ROM", CHUNK_READONLY, 0, 0x8000, rom_buff, &ram};
-    cpu_printChunk(&rom);
+    cpu_t z80;
 
-    free(rom_buff);
-    free(ram_buff);
-
-    ////////////////////////////////////////////////
-
-    // TODO: if the hex is not leaded, the cpu is expected to spinning.
-    // Memory is filled with NOPs.
-
-/*
-    if(!initZ80(rom)) {
-        die("[ERROR] Unable to initialize the processor.\n");
+    if (cpu_init(&z80, &rom)) {
+        LOG_FATAL("Cannot initialize the cpu.\n");
+        cpu_destroy(&z80);
+        exit(1);
     }
 
+    cpu_emulate(&z80, 5);
+
+/*
     // Hook up the ACIA
     init6850();
     z80.portIn = mc6850_toZ80;
@@ -186,7 +183,7 @@ int main(int argc, char **argv) {
     }
 */
 
-
+    cpu_destroy(&z80);
     logger_close();
     //endwin();
 

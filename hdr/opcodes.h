@@ -1,128 +1,131 @@
-#ifndef OPCODES_H
-#define OPCODES_H
+#ifndef _OPCODES_H_
+#define _OPCODES_H_
 
-#include "memory.h"
+#include <stdint.h>
+#include "cpu.h"
 
 #define FASTSWAP(X1,X2) X1 ^= X2; X2 ^= X1; X1 ^= X2
 
-u8   fetch8();
-u16  fetch16();
+
+uint8_t opc_fetch8(cpu_t *cpu);
+uint16_t opc_fetch16(cpu_t *cpu);
 
 // Status register support functions
-int  isNegative(u8 val);
-void rstAddSub();
-void setAddSub();
+//int  isNegative(u8 val);
+//void rstAddSub();
+//void setAddSub();
+//
+//void testZero_8(u8 val);
+//void testZero_16(u16 val);
+//
+//void testSign_8(u8 val);
+//void testSign_16(u16 val);
+//
+//void testHalfCarry_8(u8 val1, u8 val2, u8 carry);
+//
+//void testCarry_8(u8 val1, u8 val2, u8 carry);
+//void testCarry_16(u16 val1, u16 val2, u16 carry);
+//
+//void testOverflow_8(u8 val1, u8 val2, u8 res);
+//void testOverflow_16(u16 val1, u16 val2, u16 res);
+//
+//void testParity_8(u8 val);
+//void invertHC();
+//
+//// Register access functions
+//void writeReg(u8 value, u8 index);
+//u8   readReg(u8 index);
+//void logReg8(u8 index);
+//void logReg16(u8 index, int af_flag);
 
-void testZero_8(u8 val);
-void testZero_16(u16 val);
+// Z80 instruction set architecture.
+// void opc_LDrn(cpu_t *cpu, uint8_t opcode);
+// void opc_LDrr(cpu_t *cpu, uint8_t opcode);
+// void opc_LDrHL(cpu_t *cpu, uint8_t opcode);
+// void opc_LDIX(cpu_t *cpu, uint8_t opcode);
+// void opc_LDIY(cpu_t *cpu, uint8_t opcode);
+// void opc_LDHLr(cpu_t *cpu, uint8_t opcode);
+// void opc_LDHLn(cpu_t *cpu, uint8_t opcode);
+// void opc_LDABC(cpu_t *cpu, uint8_t opcode);
+// void opc_LDADE(cpu_t *cpu, uint8_t opcode);
+// void opc_LDAnn(cpu_t *cpu, uint8_t opcode);
+// void opc_LDBCA(cpu_t *cpu, uint8_t opcode);
+// void opc_LDDEA(cpu_t *cpu, uint8_t opcode);
+// void opc_LDnnA(cpu_t *cpu, uint8_t opcode);
+// void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode);
+// void opc_LDddnn(cpu_t *cpu, uint8_t opcode);
+// void opc_LDHLnn(cpu_t *cpu, uint8_t opcode);
+// void opc_LDnnHL(cpu_t *cpu, uint8_t opcode);
+// void opc_LDSPHL(cpu_t *cpu, uint8_t opcode);
+// void opc_EXDEHL(cpu_t *cpu, uint8_t opcode);
+// void opc_EXAFAFr(cpu_t *cpu, uint8_t opcode);
+// void opc_EXX(cpu_t *cpu, uint8_t opcode);
+// void opc_EXSPHL(cpu_t *cpu, uint8_t opcode);
+// void opc_ADDAr(cpu_t *cpu, uint8_t opcode);
+// void opc_ADDAn(cpu_t *cpu, uint8_t opcode);
+// void opc_ADDAHL(cpu_t *cpu, uint8_t opcode);
+// void opc_ADCAr(cpu_t *cpu, uint8_t opcode);
+// void opc_ADCAn(cpu_t *cpu, uint8_t opcode);
+// void opc_ADCAHL(cpu_t *cpu, uint8_t opcode);
+// void opc_SUBAr(cpu_t *cpu, uint8_t opcode);
+// void opc_SUBAn(cpu_t *cpu, uint8_t opcode);
+// void opc_SUBAHL(cpu_t *cpu, uint8_t opcode);
+// void opc_SBCAr(cpu_t *cpu, uint8_t opcode);
+// void opc_SBCAn(cpu_t *cpu, uint8_t opcode);
+// void opc_SBCAHL(cpu_t *cpu, uint8_t opcode);
+// void opc_ANDr(cpu_t *cpu, uint8_t opcode);
+// void opc_ANDn(cpu_t *cpu, uint8_t opcode);
+// void opc_ANDHL(cpu_t *cpu, uint8_t opcode);
+// void opc_ORr(cpu_t *cpu, uint8_t opcode);
+// void opc_ORn(cpu_t *cpu, uint8_t opcode);
+// void opc_ORHL(cpu_t *cpu, uint8_t opcode);
+// void opc_XORr(cpu_t *cpu, uint8_t opcode);
+// void opc_XORn(cpu_t *cpu, uint8_t opcode);
+// void opc_XORHL(cpu_t *cpu, uint8_t opcode);
+// void opc_CPr(cpu_t *cpu, uint8_t opcode);
+// void opc_CPn(cpu_t *cpu, uint8_t opcode);
+// void opc_CPHL(cpu_t *cpu, uint8_t opcode);
+// void opc_INCr(cpu_t *cpu, uint8_t opcode);
+// void opc_INCHL(cpu_t *cpu, uint8_t opcode);
+// void opc_DECr(cpu_t *cpu, uint8_t opcode);
+// void opc_DECHL(cpu_t *cpu, uint8_t opcode);
+// void opc_DAA(cpu_t *cpu, uint8_t opcode);
+// void opc_CPL(cpu_t *cpu, uint8_t opcode);
+// void opc_CCF(cpu_t *cpu, uint8_t opcode);
+// void opc_SCF(cpu_t *cpu, uint8_t opcode);
+// void opc_NOP(cpu_t *cpu, uint8_t opcode);
+// void opc_HALT(cpu_t *cpu, uint8_t opcode);
+// void opc_DI(cpu_t *cpu, uint8_t opcode);
+// void opc_EI(cpu_t *cpu, uint8_t opcode);
+// void opc_ADDHLss(cpu_t *cpu, uint8_t opcode);
+// void opc_INCss(cpu_t *cpu, uint8_t opcode);
+// void opc_DECss(cpu_t *cpu, uint8_t opcode);
+// void opc_RLCA(cpu_t *cpu, uint8_t opcode);
+// void opc_RLA(cpu_t *cpu, uint8_t opcode);
+// void opc_RRCA(cpu_t *cpu, uint8_t opcode);
+// void opc_RRA(cpu_t *cpu, uint8_t opcode);
+// void opc_RLC(cpu_t *cpu, uint8_t opcode);
+// void opc_JPnn(cpu_t *cpu, uint8_t opcode);
+// void opc_JPccnn(cpu_t *cpu, uint8_t opcode);
+// void opc_JRe(cpu_t *cpu, uint8_t opcode);
+// void opc_JRCe(cpu_t *cpu, uint8_t opcode);
+// void opc_JRNCe(cpu_t *cpu, uint8_t opcode);
+// void opc_JRZe(cpu_t *cpu, uint8_t opcode);
+// void opc_JRNZe(cpu_t *cpu, uint8_t opcode);
+// void opc_JPHL(cpu_t *cpu, uint8_t opcode);
+// void opc_DJNZe(cpu_t *cpu, uint8_t opcode);
+// void opc_CALLnn(cpu_t *cpu, uint8_t opcode);
+// void opc_CALLccnn(cpu_t *cpu, uint8_t opcode);
+// void opc_RET(cpu_t *cpu, uint8_t opcode);
+// void opc_RETcc(cpu_t *cpu, uint8_t opcode);
+// void opc_RSTp(cpu_t *cpu, uint8_t opcode);
+// void opc_INAn(cpu_t *cpu, uint8_t opcode);
+// void opc_OUTnA(cpu_t *cpu, uint8_t opcode);
 
-void testSign_8(u8 val);
-void testSign_16(u16 val);
-
-void testHalfCarry_8(u8 val1, u8 val2, u8 carry);
-
-void testCarry_8(u8 val1, u8 val2, u8 carry);
-void testCarry_16(u16 val1, u16 val2, u16 carry);
-
-void testOverflow_8(u8 val1, u8 val2, u8 res);
-void testOverflow_16(u16 val1, u16 val2, u16 res);
-
-void testParity_8(u8 val);
-void invertHC();
-
-// Register access functions
-void writeReg(u8 value, u8 index);
-u8   readReg(u8 index);
-void logReg8(u8 index);
-void logReg16(u8 index, int af_flag);
-
-// Z80 instruction set architecture
-void LDrr(u8 opcode);
-void LDrn(u8 opcode);
-void LDrHL(u8 opcode);
-void LDIX(u8 opcode);
-void LDIY(u8 opcode);
-void LDHLr(u8 opcode);
-void LDHLn(u8 opcode);
-void LDABC(u8 opcode);
-void LDADE(u8 opcode);
-void LDAnn(u8 opcode);
-void LDBCA(u8 opcode);
-void LDDEA(u8 opcode);
-void LDnnA(u8 opcode);
-void LDRIddnn(u8 opcode);
-void LDddnn(u8 opcode);
-void LDHLnn(u8 opcode);
-void LDnnHL(u8 opcode);
-void LDSPHL(u8 opcode);
-void EXDEHL(u8 opcode);
-void EXAFAFr(u8 opcode);
-void EXX(u8 opcode);
-void EXSPHL(u8 opcode);
-void ADDAr(u8 opcode);
-void ADDAn(u8 opcode);
-void ADDAHL(u8 opcode);
-void ADCAr(u8 opcode);
-void ADCAn(u8 opcode);
-void ADCAHL(u8 opcode);
-void SUBAr(u8 opcode);
-void SUBAn(u8 opcode);
-void SUBAHL(u8 opcode);
-void SBCAr(u8 opcode);
-void SBCAn(u8 opcode);
-void SBCAHL(u8 opcode);
-void ANDr(u8 opcode);
-void ANDn(u8 opcode);
-void ANDHL(u8 opcode);
-void ORr(u8 opcode);
-void ORn(u8 opcode);
-void ORHL(u8 opcode);
-void XORr(u8 opcode);
-void XORn(u8 opcode);
-void XORHL(u8 opcode);
-void CPr(u8 opcode);
-void CPn(u8 opcode);
-void CPHL(u8 opcode);
-void INCr(u8 opcode);
-void INCHL(u8 opcode);
-void DECr(u8 opcode);
-void DECHL(u8 opcode);
-void DAA(u8 opcode);
-void CPL(u8 opcode);
-void CCF(u8 opcode);
-void SCF(u8 opcode);
-void NOP(u8 opcode);
-void HALT(u8 opcode);
-void DI(u8 opcode);
-void EI(u8 opcode);
-void ADDHLss(u8 opcode);
-void INCss(u8 opcode);
-void DECss(u8 opcode);
-void RLCA(u8 opcode);
-void RLA(u8 opcode);
-void RRCA(u8 opcode);
-void RRA(u8 opcode);
-void RLC(u8 opcode);
-void JPnn(u8 opcode);
-void JPccnn(u8 opcode);
-void JRe(u8 opcode);
-void JRCe(u8 opcode);
-void JRNCe(u8 opcode);
-void JRZe(u8 opcode);
-void JRNZe(u8 opcode);
-void JPHL(u8 opcode);
-void DJNZe(u8 opcode);
-void CALLnn(u8 opcode);
-void CALLccnn(u8 opcode);
-void RET(u8 opcode);
-void RETcc(u8 opcode);
-void RSTp(u8 opcode);
-void INAn(u8 opcode);
-void OUTnA(u8 opcode);
 
 typedef struct {
-  void (*execute) (u8 opcode);
-  int TStates;
-} OpTbl;
+    void (*execute) (cpu_t *cpu, uint8_t opcode);
+    int32_t TStates;
+} opc_t;
 
-#endif
+#endif // _OPCODES_H_

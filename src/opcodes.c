@@ -1,7 +1,6 @@
-#include <ncurses.h>
+//#include <ncurses.h>
 
 #include "opcodes.h"
-#include "Z80.h"
 #include "logger.h"
 
 /*
@@ -11,26 +10,22 @@
   TODO: Complete IN and OUT, pag. 298.
 */
 
-
-// Log or not executed instructions
-int logInstr = 0;
-
-
-u8 fetch8() {
-  return readByte(z80.PC++);
+// Returns one byte from the current PC.
+uint8_t opc_fetch8(cpu_t *cpu) {
+    return cpu_read(cpu, cpu->PC++);
 }
 
 
-u16 fetch16() {
-  u16 res = fetch8() | (fetch8() << 8);
-  return res;
+// Returns two bytes from the current PC.
+uint16_t opc_fetch16(cpu_t *cpu) {
+    return (opc_fetch8(cpu) | (opc_fetch8(cpu) << 8));
 }
 
 
 // *****************************************************
 // *****    STATUS REGISTER - SUPPORT FUNCTIONS    *****
 // *****************************************************
-
+/*
 // Test if the two's complemented passed value is negative
 int isNegative(u8 val) {
   if(val & 0x80)
@@ -147,80 +142,89 @@ void invertHC() {
   z80.F ^= mask;
 }
 
+*/
 
-// *****************************************************
-// *****         REGISTER ACCESS FUNCTIONS         *****
-// *****************************************************
 
-// Write data into a register
-void writeReg(u8 value, u8 index) {
-  switch(index) {
-    case 0x00:
-      z80.B = value; break;
-    case 0x01:
-      z80.C = value; break;
-    case 0x02:
-      z80.D = value; break;
-    case 0x03:
-      z80.E = value; break;
-    case 0x04:
-      z80.H = value; break;
-    case 0x05:
-      z80.L = value; break;
-    case 0x07:
-      z80.A = value; break;
-    default:
-      die("[ERROR] Unable to write a non-existing register.\n");
-  }
+
+///////////////////////////////////////////////////////////
+// REGISTER ACCESS FUNCTIONS
+///////////////////////////////////////////////////////////
+
+// Writes data into a register.
+static void opc_writeReg(cpu_t *cpu, uint8_t reg, uint8_t value) {
+    switch(reg) {
+        case 0x00:
+            cpu->B = value; break;
+        case 0x01:
+            cpu->C = value; break;
+        case 0x02:
+            cpu->D = value; break;
+        case 0x03:
+            cpu->E = value; break;
+        case 0x04:
+            cpu->H = value; break;
+        case 0x05:
+            cpu->L = value; break;
+        case 0x07:
+            cpu->A = value; break;
+        default:
+            LOG_FATAL("Cannot write to unknown register (0x%02X).\n", reg);
+            exit(1);
+    }
+    return;
 }
 
 
-// Read data from a register
-u8 readReg(u8 index) {
-  switch(index) {
-    case 0x00:
-      return z80.B; break;
-    case 0x01:
-      return z80.C; break;
-    case 0x02:
-      return z80.D; break;
-    case 0x03:
-      return z80.E; break;
-    case 0x04:
-      return z80.H; break;
-    case 0x05:
-      return z80.L; break;
-    case 0x07:
-      return z80.A; break;
-    default:
-      die("[ERROR] Unable to read a non-existing register.\n");
-  }
-  return 0; // Should never get there
+// Reads data from a register.
+static uint8_t opc_readReg(cpu_t *cpu, uint8_t reg) {
+    switch(reg) {
+        case 0x00:
+            return cpu->B;
+        case 0x01:
+            return cpu->C;
+        case 0x02:
+            return cpu->D;
+        case 0x03:
+            return cpu->E;
+        case 0x04:
+            return cpu->H;
+        case 0x05:
+            return cpu->L;
+        case 0x07:
+            return cpu->A;
+        default:
+            LOG_FATAL("Cannot read unknown register (0x%02X).\n", reg);
+            exit(1);
+    }
+    return 0; // Never reached.
 }
 
 
-// Log accessed 8-bit register for debugging
-void logReg8(u8 index) {
-  switch(index) {
-    case 0x00:
-      writeLog("B"); break;
-    case 0x01:
-      writeLog("C"); break;
-    case 0x02:
-      writeLog("D"); break;
-    case 0x03:
-      writeLog("E"); break;
-    case 0x04:
-      writeLog("H"); break;
-    case 0x05:
-      writeLog("L"); break;
-    case 0x07:
-      writeLog("A"); break;
-    default:
-      die("[ERROR] Unable to log a non-existing register.\n");
-  }
+// Returns a string carrying the name of the given 8-bit register.
+static char * opc_regName8(uint8_t reg) {
+    switch(reg) {
+        case 0x00:
+            return "B";
+        case 0x01:
+            return "C";
+        case 0x02:
+            return "D";
+        case 0x03:
+            return "E";
+        case 0x04:
+            return "H";
+        case 0x05:
+            return "L";
+        case 0x07:
+            return "A";
+        default:
+            LOG_FATAL("Unknown register (0x%02X).\n", reg);
+            exit(1);
+    }
+    return ""; // Never reached.
 }
 
+/*
 
 // Log accessed 16-bit register for debugging
 void logReg16(u8 index, int af_flag) {
@@ -241,63 +245,58 @@ void logReg16(u8 index, int af_flag) {
   }
 }
 
+*/
 
-// ******************************************************
-// *****        INSTRUCTION SET ARCHITECTURE        *****
-// ******************************************************
 
-// This is LD r, r' instruction
-void LDrr(u8 opcode) {
-  u8 dst = ((opcode >> 3) & 0x07);
-  u8 src = (opcode & 0x07);
-  u8 srcVal = readReg(src);
-  writeReg(srcVal, dst);
-  if(logInstr) {
-    writeLog("LD "); logReg8(dst); writeLog(", "); logReg8(src); writeLog("\n");
-  }
+
+///////////////////////////////////////////////////////////
+// INSTRUCTION SET ARCHITECTURE
+///////////////////////////////////////////////////////////
+
+// LD r,r' instruction.
+static void opc_LDrr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t dst = ((opcode >> 3) & 0x07);
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    opc_writeReg(cpu, dst, data);
+    LOG_DEBUG("Executed LD %s,%s\n", opc_regName8(dst), opc_regName8(src));
+    return;
 }
 
 
-// This is LD r, n instruction
-void LDrn(u8 opcode) {
-  u8 dst = ((opcode >> 3) & 0x07);
-  u8 n = fetch8();
-  writeReg(n, dst);
-  if(logInstr) {
-    writeLog("LD "); logReg8(dst); fprintf(fpLog, ", %02X\n", n);
-  }
+// LD r,n instruction.
+static void opc_LDrn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t dst = ((opcode >> 3) & 0x07);
+    uint8_t n = opc_fetch8(cpu);
+    opc_writeReg(cpu, dst, n);
+    LOG_DEBUG("Executed LD %s,0x%02X\n", opc_regName8(dst), n);
+    return;
 }
 
 
-// This is LD r, (HL) instruction
-void LDrHL(u8 opcode) {
-  u8 dst = ((opcode >> 3) & 0x07);
-  u8 val = readByte(z80.HL);
-  writeReg(val, dst);
-  if(logInstr) {
-    writeLog("LD "); logReg8(dst); fprintf(fpLog, ", (HL)\t\tHL = %04X\n", z80.HL);
-  }
+// LD r,(HL) instruction.
+static void opc_LDrHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t dst = ((opcode >> 3) & 0x07);
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    opc_writeReg(cpu, dst, data);
+    LOG_DEBUG("Executed LD %s,(HL) HL=0x%04X\n", opc_regName8(dst), cpu->HL);
+    return;
 }
 
 
-void LDIX(u8 opcode) {
-  opTbl[0xDD].TStates = 19;
-  u8 follByte = fetch8();
+static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
+    opc_tbl[0xDD].TStates = 19;
+    uint8_t next_opc = opc_fetch8(cpu);
 
-  // This is LD r, (IX+d) instruction
-  if((follByte & 0xC7) == 0x46) {
-    u8 dst = ((follByte >> 3) & 0x07);
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u16 offset = z80.IX + extended_d;
-    u8 val = readByte(offset);
-    writeReg(val, dst);
-    if(logInstr) {
-      writeLog("LD "); logReg8(dst); fprintf(fpLog, ", (IX+d)\t\tIX+d = %04X\n", offset);
+    // LD r,(IX+d) instruction.
+    if ((next_opc & 0xC7) == 0x46) {
+        uint8_t dst = ((next_opc >> 3) & 0x07);
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        opc_writeReg(cpu, dst, data);
+        LOG_DEBUG("Executed LD %s,(IX+d) IX+d=0x%04X\n", opc_regName8(dst), addr);
     }
-  }
 
   // This is LD (IX+d), r instruction
   else if((follByte & 0xF8) == 0x70) {
@@ -612,7 +611,7 @@ void LDIX(u8 opcode) {
     u8 value = readByte(z80.IX + extended_d);
     u8 complDec = 0xFF;	// -1
     u8 res = value + complDec;
-    
+
     testSign_8(res);
     testZero_8(res);
     testHalfCarry_8(value, complDec, 0);
@@ -927,7 +926,7 @@ void LDIX(u8 opcode) {
 }
 
 
-void LDIY(u8 opcode) {
+void LDIY(cpu_t *cpu, uint8_t opcode) {
   opTbl[0xFD].TStates = 19;
   u8 follByte = fetch8();
 
@@ -1575,7 +1574,7 @@ void LDIY(u8 opcode) {
 
 
 // This is LD (HL), r instruction
-void LDHLr(u8 opcode) {
+void LDHLr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 srcVal = readReg(src);
   writeByte(srcVal, z80.HL);
@@ -1586,7 +1585,7 @@ void LDHLr(u8 opcode) {
 
 
 // This is LD (HL), n instruction
-void LDHLn(u8 opcode) {
+void LDHLn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   writeByte(n, z80.HL);
   if(logInstr) {
@@ -1596,7 +1595,7 @@ void LDHLn(u8 opcode) {
 
 
 // This is LD A, (BC) instruction
-void LDABC(u8 opcode) {
+void LDABC(cpu_t *cpu, uint8_t opcode) {
   z80.A = readByte(z80.BC);
   if(logInstr) {
     fprintf(fpLog, "LD A, (BC)\t\tBC = %04X\n", z80.BC);
@@ -1605,7 +1604,7 @@ void LDABC(u8 opcode) {
 
 
 // This is LD A, (DE) instruction
-void LDADE(u8 opcode) {
+void LDADE(cpu_t *cpu, uint8_t opcode) {
   z80.A = readByte(z80.DE);
   if(logInstr) {
     fprintf(fpLog, "LD A, (DE)\t\tDE = %04X\n", z80.DE);
@@ -1614,7 +1613,7 @@ void LDADE(u8 opcode) {
 
 
 // This is LD A, (nn) instruction
-void LDAnn(u8 opcode) {
+void LDAnn(cpu_t *cpu, uint8_t opcode) {
   u16 offset = fetch16();
   z80.A = readByte(offset);
   if(logInstr) {
@@ -1624,7 +1623,7 @@ void LDAnn(u8 opcode) {
 
 
 // This is LD (BC), A
-void LDBCA(u8 opcode) {
+void LDBCA(cpu_t *cpu, uint8_t opcode) {
   writeByte(z80.A, z80.BC);
   if(logInstr) {
     fprintf(fpLog, "LD (BC), A\t\tBC = %04X\n", z80.BC);
@@ -1633,7 +1632,7 @@ void LDBCA(u8 opcode) {
 
 
 // This is LD (DE), A
-void LDDEA(u8 opcode) {
+void LDDEA(cpu_t *cpu, uint8_t opcode) {
   writeByte(z80.A, z80.DE);
   if(logInstr) {
     fprintf(fpLog, "LD (DE), A\t\tDE = %04X\n", z80.DE);
@@ -1642,7 +1641,7 @@ void LDDEA(u8 opcode) {
 
 
 // This is LD (nn), A
-void LDnnA(u8 opcode) {
+void LDnnA(cpu_t *cpu, uint8_t opcode) {
   u16 offset = fetch16();
   writeByte(z80.A, offset);
   if(logInstr) {
@@ -1651,7 +1650,7 @@ void LDnnA(u8 opcode) {
 }
 
 
-void LDRIddnn(u8 opcode) {
+void LDRIddnn(cpu_t *cpu, uint8_t opcode) {
   opTbl[0xED].TStates = 9;
   u8 follByte = fetch8();
 
@@ -2209,7 +2208,7 @@ void LDRIddnn(u8 opcode) {
 
 
 // This is LD dd, nn instruction
-void LDddnn(u8 opcode) {
+void LDddnn(cpu_t *cpu, uint8_t opcode) {
   u8 dst = ((opcode >> 4) & 0x03);
   u16 nn = fetch16();
   switch(dst) {
@@ -2235,7 +2234,7 @@ void LDddnn(u8 opcode) {
 
 
 // This is LD HL, (nn)
-void LDHLnn(u8 opcode) {
+void LDHLnn(cpu_t *cpu, uint8_t opcode) {
   u16 offset = fetch16();
   z80.L = readByte(offset);
   z80.H = readByte(offset + 1);
@@ -2246,7 +2245,7 @@ void LDHLnn(u8 opcode) {
 
 
 // This is LD (nn), HL
-void LDnnHL(u8 opcode) {
+void LDnnHL(cpu_t *cpu, uint8_t opcode) {
   u16 offset = fetch16();
   writeByte(z80.L, offset);
   writeByte(z80.H, offset + 1);
@@ -2257,7 +2256,7 @@ void LDnnHL(u8 opcode) {
 
 
 // This is LD SP, HL instruction
-void LDSPHL(u8 opcode) {
+void LDSPHL(cpu_t *cpu, uint8_t opcode) {
   z80.SP = z80.HL;
   if(logInstr) {
     writeLog("LD SP, HL\n");
@@ -2266,7 +2265,7 @@ void LDSPHL(u8 opcode) {
 
 
 // This is PUSH qq instruction
-void PUSHqq(u8 opcode) {
+void PUSHqq(cpu_t *cpu, uint8_t opcode) {
   u8 src = ((opcode >> 4) & 0x03); // Isolate qq
   switch(src) {
     case 0x00:
@@ -2291,7 +2290,7 @@ void PUSHqq(u8 opcode) {
 
 
 // This is POP qq instruction
-void POPqq(u8 opcode) {
+void POPqq(cpu_t *cpu, uint8_t opcode) {
   u8 dst = ((opcode >> 4) & 0x03); // Isolate qq
   u16 popVal = stackPop();
   switch(dst) {
@@ -2317,7 +2316,7 @@ void POPqq(u8 opcode) {
 
 
 // This is EX DE, HL instruction
-void EXDEHL(u8 opcode) {
+void EXDEHL(cpu_t *cpu, uint8_t opcode) {
   FASTSWAP(z80.DE, z80.HL);
   if(logInstr) {
     writeLog("EX DE, HL\n");
@@ -2326,7 +2325,7 @@ void EXDEHL(u8 opcode) {
 
 
 // This is EX AF, AF' instruction
-void EXAFAFr(u8 opcode) {
+void EXAFAFr(cpu_t *cpu, uint8_t opcode) {
   FASTSWAP(z80.AF, z80.ArFr);
   if(logInstr) {
     writeLog("EX AF, AF'\n");
@@ -2335,7 +2334,7 @@ void EXAFAFr(u8 opcode) {
 
 
 // This is EXX instruction
-void EXX(u8 opcode) {
+void EXX(cpu_t *cpu, uint8_t opcode) {
   FASTSWAP(z80.BC, z80.BrCr);
   FASTSWAP(z80.DE, z80.DrEr);
   FASTSWAP(z80.HL, z80.HrLr);
@@ -2346,7 +2345,7 @@ void EXX(u8 opcode) {
 
 
 // This is EX (SP), HL instruction
-void EXSPHL(u8 opcode) {
+void EXSPHL(cpu_t *cpu, uint8_t opcode) {
   u8 valSP  = readByte(z80.SP);      // Byte at SP
   u8 valSPH = readByte(z80.SP + 1);  // Byte at SP + 1
   writeByte(z80.H, z80.SP + 1);
@@ -2360,7 +2359,7 @@ void EXSPHL(u8 opcode) {
 
 
 // This is ADD A, r instruction
-void ADDAr(u8 opcode) {
+void ADDAr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 value = readReg(src);
   u8 res = z80.A + value;
@@ -2380,7 +2379,7 @@ void ADDAr(u8 opcode) {
 
 
 // This is SUB A, r instruction
-void SUBAr(u8 opcode) {
+void SUBAr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 value = readReg(src);
   u8 complVal = ~value + 1;
@@ -2402,7 +2401,7 @@ void SUBAr(u8 opcode) {
 
 
 // This is ADD A, n instruction
-void ADDAn(u8 opcode) {
+void ADDAn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   u8 res = z80.A + n;
 
@@ -2421,7 +2420,7 @@ void ADDAn(u8 opcode) {
 
 
 // This is SUB A, n instruction
-void SUBAn(u8 opcode) {
+void SUBAn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   u8 complVal = ~n + 1;
   u8 res = z80.A + complVal;
@@ -2442,7 +2441,7 @@ void SUBAn(u8 opcode) {
 
 
 // This is ADD A, (HL) instruction
-void ADDAHL(u8 opcode) {
+void ADDAHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 res = z80.A + value;
 
@@ -2461,7 +2460,7 @@ void ADDAHL(u8 opcode) {
 
 
 // This is SUB A, (HL) instruction
-void SUBAHL(u8 opcode) {
+void SUBAHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 complVal = ~value + 1;
   u8 res = z80.A + complVal;
@@ -2482,7 +2481,7 @@ void SUBAHL(u8 opcode) {
 
 
 // This is ADC A, r instruction
-void ADCAr(u8 opcode) {
+void ADCAr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 value = readReg(src);
   u8 carry = (z80.F & FLAG_CARRY);
@@ -2503,7 +2502,7 @@ void ADCAr(u8 opcode) {
 
 
 // This is SBC A, r instruction
-void SBCAr(u8 opcode) {
+void SBCAr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 value = readReg(src);
   u8 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
@@ -2526,7 +2525,7 @@ void SBCAr(u8 opcode) {
 
 
 // This is ADC A, n instruction
-void ADCAn(u8 opcode) {
+void ADCAn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   u8 carry = (z80.F & FLAG_CARRY);
   u8 res = z80.A + n + carry;
@@ -2546,7 +2545,7 @@ void ADCAn(u8 opcode) {
 
 
 // This is SBC A, n instruction
-void SBCAn(u8 opcode) {
+void SBCAn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   u8 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
   // a - b - c = a + ~b + 1 - c = a + ~b + !c
@@ -2568,7 +2567,7 @@ void SBCAn(u8 opcode) {
 
 
 // This is ADC A, (HL) instruction
-void ADCAHL(u8 opcode) {
+void ADCAHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 carry = (z80.F & FLAG_CARRY);
   u8 res = z80.A + value + carry;
@@ -2588,7 +2587,7 @@ void ADCAHL(u8 opcode) {
 
 
 // This is SBC A, (HL) instruction
-void SBCAHL(u8 opcode) {
+void SBCAHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
   // a - b - c = a + ~b + 1 - c = a + ~b + !c
@@ -2610,7 +2609,7 @@ void SBCAHL(u8 opcode) {
 
 
 // This is AND r instruction
-void ANDr(u8 opcode) {
+void ANDr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 value = readReg(src);
   u8 res = z80.A & value;
@@ -2630,7 +2629,7 @@ void ANDr(u8 opcode) {
 
 
 // This is AND n instruction
-void ANDn(u8 opcode) {
+void ANDn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   u8 res = z80.A & n;
 
@@ -2649,7 +2648,7 @@ void ANDn(u8 opcode) {
 
 
 // This is AND (HL) instruction
-void ANDHL(u8 opcode) {
+void ANDHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 res = z80.A & value;
 
@@ -2668,7 +2667,7 @@ void ANDHL(u8 opcode) {
 
 
 // This is OR r instruction
-void ORr(u8 opcode) {
+void ORr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 value = readReg(src);
   u8 res = z80.A | value;
@@ -2687,7 +2686,7 @@ void ORr(u8 opcode) {
 
 
 // This is OR n instruction
-void ORn(u8 opcode) {
+void ORn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   u8 res = z80.A | n;
 
@@ -2705,7 +2704,7 @@ void ORn(u8 opcode) {
 
 
 // This is OR (HL) instruction
-void ORHL(u8 opcode) {
+void ORHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 res = z80.A | value;
 
@@ -2723,7 +2722,7 @@ void ORHL(u8 opcode) {
 
 
 // This is XOR r instruction
-void XORr(u8 opcode) {
+void XORr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 value = readReg(src);
   u8 res = z80.A ^ value;
@@ -2742,7 +2741,7 @@ void XORr(u8 opcode) {
 
 
 // This is XOR n instruction
-void XORn(u8 opcode) {
+void XORn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   u8 res = z80.A ^ n;
 
@@ -2760,7 +2759,7 @@ void XORn(u8 opcode) {
 
 
 // This is XOR (HL) instruction
-void XORHL(u8 opcode) {
+void XORHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 res = z80.A ^ value;
 
@@ -2778,7 +2777,7 @@ void XORHL(u8 opcode) {
 
 
 // This is CP r instruction
-void CPr(u8 opcode) {
+void CPr(cpu_t *cpu, uint8_t opcode) {
   u8 src = (opcode & 0x07);
   u8 value = readReg(src);
   u8 complVal = ~value + 1;
@@ -2799,7 +2798,7 @@ void CPr(u8 opcode) {
 
 
 // This is CP n instruction
-void CPn(u8 opcode) {
+void CPn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   u8 complVal = ~n + 1;
   u8 res = z80.A + complVal;
@@ -2819,7 +2818,7 @@ void CPn(u8 opcode) {
 
 
 // This is CP (HL) instruction
-void CPHL(u8 opcode) {
+void CPHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 complVal = ~value + 1;
   u8 res = z80.A + complVal;
@@ -2839,7 +2838,7 @@ void CPHL(u8 opcode) {
 
 
 // This is INC r instruction
-void INCr(u8 opcode) {
+void INCr(cpu_t *cpu, uint8_t opcode) {
   u8 src = ((opcode >> 3) & 0x07);
   u8 value = readReg(src);
   u8 res = value + 1;
@@ -2858,7 +2857,7 @@ void INCr(u8 opcode) {
 
 
 // This is INC (HL) instruction
-void INCHL(u8 opcode) {
+void INCHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 res = value + 1;
 
@@ -2876,7 +2875,7 @@ void INCHL(u8 opcode) {
 
 
 // This is DEC r instruction
-void DECr(u8 opcode) {
+void DECr(cpu_t *cpu, uint8_t opcode) {
   u8 src = ((opcode >> 3) & 0x07);
   u8 value = readReg(src);
   u8 complDec = 0xFF; // -1
@@ -2898,7 +2897,7 @@ void DECr(u8 opcode) {
 
 
 // This is DEC (HL) instruction
-void DECHL(u8 opcode) {
+void DECHL(cpu_t *cpu, uint8_t opcode) {
   u8 value = readByte(z80.HL);
   u8 complDec = 0xFF; // -1
   u8 res = value + complDec;
@@ -2919,7 +2918,7 @@ void DECHL(u8 opcode) {
 
 
 // TODO: DAA
-void DAA(u8 opcode) {
+void DAA(cpu_t *cpu, uint8_t opcode) {
   die("[FATAL] DAA instruction not implemented yet.");
 /*
   int top4 = (e8080.A >> 4) & 0xF;
@@ -2941,7 +2940,7 @@ void DAA(u8 opcode) {
 
 
 // This is CPL instruction
-void CPL(u8 opcode) {
+void CPL(cpu_t *cpu, uint8_t opcode) {
   z80.A = ~(z80.A);
 
   setAddSub();
@@ -2954,7 +2953,7 @@ void CPL(u8 opcode) {
 
 
 // This is CCF instruction
-void CCF(u8 opcode) {
+void CCF(cpu_t *cpu, uint8_t opcode) {
   rstAddSub();
 
   if(z80.F & FLAG_CARRY)
@@ -2971,7 +2970,7 @@ void CCF(u8 opcode) {
 
 
 // This is SCF instruction
-void SCF(u8 opcode) {
+void SCF(cpu_t *cpu, uint8_t opcode) {
   rstAddSub();
   z80.F &= ~(FLAG_HCARRY);
   z80.F |= (FLAG_CARRY);
@@ -2983,7 +2982,7 @@ void SCF(u8 opcode) {
 
 
 // This is NOP instruction
-void NOP(u8 opcode) {
+void NOP(cpu_t *cpu, uint8_t opcode) {
   /* Do nothing */
 
   if(logInstr) {
@@ -2993,7 +2992,7 @@ void NOP(u8 opcode) {
 
 
 // This is HALT instruction
-void HALT(u8 opcode) {
+void HALT(cpu_t *cpu, uint8_t opcode) {
   z80.halt = 1;
 
   if(logInstr) {
@@ -3003,7 +3002,7 @@ void HALT(u8 opcode) {
 
 
 // This is DI instruction
-void DI(u8 opcode) {
+void DI(cpu_t *cpu, uint8_t opcode) {
   z80.IFF1 = 0;
   z80.IFF2 = 0;
 
@@ -3014,7 +3013,7 @@ void DI(u8 opcode) {
 
 
 // This is EI instruction
-void EI(u8 opcode) {
+void EI(cpu_t *cpu, uint8_t opcode) {
   z80.IFF1 = 1;
   z80.IFF2 = 1;
 
@@ -3025,7 +3024,7 @@ void EI(u8 opcode) {
 
 
 // This is ADD HL, ss instruction
-void ADDHLss(u8 opcode) {
+void ADDHLss(cpu_t *cpu, uint8_t opcode) {
   u16 val1 = z80.HL;
   u16 val2;
   u8 src = ((opcode >> 4) & 0x03);
@@ -3059,7 +3058,7 @@ void ADDHLss(u8 opcode) {
 
 
 // This is INC ss instruction
-void INCss(u8 opcode) {
+void INCss(cpu_t *cpu, uint8_t opcode) {
   u8 src = ((opcode >> 4) & 0x03);
 
   switch(src) {
@@ -3086,7 +3085,7 @@ void INCss(u8 opcode) {
 
 
 // This is DEC ss instruction
-void DECss(u8 opcode) {
+void DECss(cpu_t *cpu, uint8_t opcode) {
   u8 src = ((opcode >> 4) & 0x03);
 
   switch(src) {
@@ -3113,7 +3112,7 @@ void DECss(u8 opcode) {
 
 
 // This is RLCA instruction
-void RLCA(u8 opcode) {
+void RLCA(cpu_t *cpu, uint8_t opcode) {
   u8 a_msb = (z80.A & 0x80) >> 7;
   // Shift left by one
   z80.A = ((z80.A << 1) | a_msb);
@@ -3134,7 +3133,7 @@ void RLCA(u8 opcode) {
 
 
 // This is RLA instruction
-void RLA(u8 opcode) {
+void RLA(cpu_t *cpu, uint8_t opcode) {
   u8 oldCarry = (z80.F & FLAG_CARRY);
 
   // Update carry flag with A msb
@@ -3155,7 +3154,7 @@ void RLA(u8 opcode) {
 
 
 // This is RRCA instruction
-void RRCA(u8 opcode) {
+void RRCA(cpu_t *cpu, uint8_t opcode) {
   u8 a_lsb = (z80.A & 0x01);
 
   // Copy A LSB to carry flag
@@ -3176,7 +3175,7 @@ void RRCA(u8 opcode) {
 
 
 // This is RRA instruction
-void RRA(u8 opcode) {
+void RRA(cpu_t *cpu, uint8_t opcode) {
   u8 oldCarry = (z80.F & FLAG_CARRY);
 
   // Copy bit 0 to carry bit
@@ -3196,7 +3195,7 @@ void RRA(u8 opcode) {
 }
 
 
-void RLC(u8 opcode) {
+void RLC(cpu_t *cpu, uint8_t opcode) {
   opTbl[0xCB].TStates = 8;
   u8 follByte = fetch8();
 
@@ -3654,7 +3653,7 @@ void RLC(u8 opcode) {
 
 
 // This is JP nn instruction
-void JPnn(u8 opcode) {
+void JPnn(cpu_t *cpu, uint8_t opcode) {
   u16 offset = fetch16();
   z80.PC = offset;
   if(logInstr) {
@@ -3664,7 +3663,7 @@ void JPnn(u8 opcode) {
 
 
 // This is JP cc, nn instruction
-void JPccnn(u8 opcode) {
+void JPccnn(cpu_t *cpu, uint8_t opcode) {
   u16 offset = fetch16();
   u8 cc = ((opcode >> 3) & 0x07);
 
@@ -3724,7 +3723,7 @@ void JPccnn(u8 opcode) {
 
 
 // This is JR e instruction
-void JRe(u8 opcode) {
+void JRe(cpu_t *cpu, uint8_t opcode) {
   u8 offset = fetch8();
   u16 extended_o = offset;
   if(isNegative(offset))
@@ -3738,7 +3737,7 @@ void JRe(u8 opcode) {
 
 
 // This is JR C, e instruction
-void JRCe(u8 opcode) {
+void JRCe(cpu_t *cpu, uint8_t opcode) {
   opTbl[0x38].TStates = 12;  // Condition is met
   u8 offset = fetch8();
   u16 extended_o = offset;
@@ -3756,7 +3755,7 @@ void JRCe(u8 opcode) {
 
 
 // This is JR NC, e instruction
-void JRNCe(u8 opcode) {
+void JRNCe(cpu_t *cpu, uint8_t opcode) {
   opTbl[0x30].TStates = 12;  // Condition is met
   u8 offset = fetch8();
   u16 extended_o = offset;
@@ -3774,7 +3773,7 @@ void JRNCe(u8 opcode) {
 
 
 // This is JR Z, e instruction
-void JRZe(u8 opcode) {
+void JRZe(cpu_t *cpu, uint8_t opcode) {
   opTbl[0x28].TStates = 12;  // Condition is met
   u8 offset = fetch8();
   u16 extended_o = offset;
@@ -3792,7 +3791,7 @@ void JRZe(u8 opcode) {
 
 
 // This is JR NZ, e instruction
-void JRNZe(u8 opcode) {
+void JRNZe(cpu_t *cpu, uint8_t opcode) {
   opTbl[0x20].TStates = 12;  // Condition is met
   u8 offset = fetch8();
   u16 extended_o = offset;
@@ -3810,7 +3809,7 @@ void JRNZe(u8 opcode) {
 
 
 // This is JP (HL) instruction
-void JPHL(u8 opcode) {
+void JPHL(cpu_t *cpu, uint8_t opcode) {
   z80.PC = z80.HL;
   if(logInstr) {
     writeLog("JP HL\n");
@@ -3819,7 +3818,7 @@ void JPHL(u8 opcode) {
 
 
 // This is DJNZ, e instruction
-void DJNZe(u8 opcode) {
+void DJNZe(cpu_t *cpu, uint8_t opcode) {
   u8 offset = fetch8();
   u16 extended_o = offset;
   if(isNegative(offset))
@@ -3840,7 +3839,7 @@ void DJNZe(u8 opcode) {
 
 
 // This is CALL nn instruction
-void CALLnn(u8 opcode) {
+void CALLnn(cpu_t *cpu, uint8_t opcode) {
   u16 nn = fetch16();
   stackPush(z80.PC);
   z80.PC = nn;
@@ -3851,7 +3850,7 @@ void CALLnn(u8 opcode) {
 
 
 // This is CALL cc, nn instruction
-void CALLccnn(u8 opcode) {
+void CALLccnn(cpu_t *cpu, uint8_t opcode) {
   u16 nn = fetch16();
   u8 cc = ((opcode >> 3) & 0x07);
 
@@ -3951,7 +3950,7 @@ void CALLccnn(u8 opcode) {
 
 
 // This is RET instruction
-void RET(u8 opcode) {
+void RET(cpu_t *cpu, uint8_t opcode) {
   z80.PC = stackPop();
   if(logInstr) {
     writeLog("RET\n");
@@ -3960,7 +3959,7 @@ void RET(u8 opcode) {
 
 
 // This is RET cc instruction
-void RETcc(u8 opcode) {
+void RETcc(cpu_t *cpu, uint8_t opcode) {
   u8 cc = ((opcode >> 3) & 0x07);
 
   switch(cc) {
@@ -4051,7 +4050,7 @@ void RETcc(u8 opcode) {
 
 
 // This is RST p instruction
-void RSTp(u8 opcode) {
+void RSTp(cpu_t *cpu, uint8_t opcode) {
   u8 t = ((opcode >> 3) & 0x07);
   stackPush(z80.PC);
 
@@ -4103,7 +4102,7 @@ void RSTp(u8 opcode) {
 
 
 // This is IN A, (n) instruction
-void INAn(u8 opcode) {
+void INAn(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   z80.A = z80.portIn(n);
 
@@ -4114,7 +4113,7 @@ void INAn(u8 opcode) {
 
 
 // This is OUT (n), A
-void OUTnA(u8 opcode) {
+void OUTnA(cpu_t *cpu, uint8_t opcode) {
   u8 n = fetch8();
   z80.portOut(n, z80.A);
 
@@ -4124,261 +4123,261 @@ void OUTnA(u8 opcode) {
 }
 
 
-OpTbl opTbl[0x100] = {
-  {NOP, 4},
-  {LDddnn, 10},
-  {LDBCA, 7},
-  {INCss, 6},
-  {INCr, 4},
-  {DECr, 4},
-  {LDrn, 7},
-  {RLCA, 4},
-  {EXAFAFr, 4},
-  {ADDHLss, 11},
-  {LDABC, 7},
-  {DECss, 6},
-  {INCr, 4},
-  {DECr, 4},
-  {LDrn, 7},
-  {RRCA, 4},
-  {DJNZe, 13}, // 0x10
-  {LDddnn, 10},
-  {LDDEA, 7},
-  {INCss, 6},
-  {INCr, 4},
-  {DECr, 4},
-  {LDrn, 7},
-  {RLA, 4},
-  {JRe, 12},
-  {ADDHLss, 11},
-  {LDADE, 7},
-  {DECss, 6},
-  {INCr, 4},
-  {DECr, 4},
-  {LDrn, 7},
-  {RRA, 4},
-  {JRNZe, 12}, // 0x20
-  {LDddnn, 10},
-  {LDnnHL, 16},
-  {INCss, 6},
-  {INCr, 4},
-  {DECr, 4},
-  {LDrn, 7},
-  {DAA, 4},
-  {JRZe, 12},
-  {ADDHLss, 11},
-  {LDHLnn, 16},
-  {DECss, 6},
-  {INCr, 4},
-  {DECr, 4},
-  {LDrn, 7},
-  {CPL, 4},
-  {JRNCe, 12}, // 0x30
-  {LDddnn, 10},
-  {LDnnA, 13},
-  {INCss, 6},
-  {INCHL, 11},
-  {DECHL, 11},
-  {LDHLn, 10},
-  {SCF, 4},
-  {JRCe, 12},
-  {ADDHLss, 11},
-  {LDAnn, 13},
-  {DECss, 6},
-  {INCr, 4},
-  {DECr, 4},
-  {LDrn, 7},
-  {CCF, 4},
-  {LDrr, 4}, // 0X40
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrHL, 7},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrHL, 7},
-  {LDrr, 4},
-  {LDrr, 4}, // 0x50
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrHL, 7},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrHL, 7},
-  {LDrr, 4},
-  {LDrr, 4}, // 0x60
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrHL, 7},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrHL, 7},
-  {LDrr, 4},
-  {LDHLr, 7}, // 0x70
-  {LDHLr, 7},
-  {LDHLr, 7},
-  {LDHLr, 7},
-  {LDHLr, 7},
-  {LDHLr, 7},
-  {HALT, 4},
-  {LDHLr, 7},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrr, 4},
-  {LDrHL, 7},
-  {LDrr, 4},
-  {ADDAr, 4}, // 0x80
-  {ADDAr, 4},
-  {ADDAr, 4},
-  {ADDAr, 4},
-  {ADDAr, 4},
-  {ADDAr, 4},
-  {ADDAHL, 7},
-  {ADDAr, 4},
-  {ADCAr, 4},
-  {ADCAr, 4},
-  {ADCAr, 4},
-  {ADCAr, 4},
-  {ADCAr, 4},
-  {ADCAr, 4},
-  {ADCAHL, 7},
-  {ADCAr, 4},
-  {SUBAr, 4}, // 0x90
-  {SUBAr, 4},
-  {SUBAr, 4},
-  {SUBAr, 4},
-  {SUBAr, 4},
-  {SUBAr, 4},
-  {SUBAHL, 7},
-  {SUBAr, 4},
-  {SBCAr, 4},
-  {SBCAr, 4},
-  {SBCAr, 4},
-  {SBCAr, 4},
-  {SBCAr, 4},
-  {SBCAr, 4},
-  {SBCAHL, 7},
-  {SBCAr, 4},
-  {ANDr, 4}, // 0xA0
-  {ANDr, 4},
-  {ANDr, 4},
-  {ANDr, 4},
-  {ANDr, 4},
-  {ANDr, 4},
-  {ANDHL, 7},
-  {ANDr, 4},
-  {XORr, 4},
-  {XORr, 4},
-  {XORr, 4},
-  {XORr, 4},
-  {XORr, 4},
-  {XORr, 4},
-  {XORHL, 7},
-  {XORr, 4},
-  {ORr, 4}, // 0xB0
-  {ORr, 4},
-  {ORr, 4},
-  {ORr, 4},
-  {ORr, 4},
-  {ORr, 4},
-  {ORHL, 7},
-  {ORr, 4},
-  {CPr, 4},
-  {CPr, 4},
-  {CPr, 4},
-  {CPr, 4},
-  {CPr, 4},
-  {CPr, 4},
-  {CPHL, 7},
-  {CPr, 4},
-  {RETcc, 5}, // 0xC0
-  {POPqq, 10},
-  {JPccnn, 10},
-  {JPnn, 10},
-  {CALLccnn, 10},
-  {PUSHqq, 11},
-  {ADDAn, 7},
-  {RSTp, 11},
-  {RETcc, 5},
-  {RET, 10},
-  {JPccnn, 10},
-  {RLC, 8},
-  {CALLccnn, 10},
-  {CALLnn, 17},
-  {ADCAn, 7},
-  {RSTp, 11},
-  {RETcc, 5}, // 0xD0
-  {POPqq, 10},
-  {JPccnn, 10},
-  {OUTnA, 11},
-  {CALLccnn, 10},
-  {PUSHqq, 11},
-  {SUBAn, 7},
-  {RSTp, 11},
-  {RETcc, 5},
-  {EXX, 4},
-  {JPccnn, 10},
-  {INAn, 11},
-  {CALLccnn, 10},
-  {LDIX, 19},
-  {SBCAn, 7},
-  {RSTp, 11},
-  {RETcc, 5}, // 0xE0
-  {POPqq, 10},
-  {JPccnn, 10},
-  {EXSPHL, 19},
-  {CALLccnn, 10},
-  {PUSHqq, 11},
-  {ANDn, 7},
-  {RSTp, 11},
-  {RETcc, 5},
-  {JPHL, 4},
-  {JPccnn, 10},
-  {EXDEHL, 4},
-  {CALLccnn, 10},
-  {LDRIddnn, 9},
-  {XORn, 7},
-  {RSTp, 11},
-  {RETcc, 5}, // 0xF0
-  {POPqq, 10},
-  {JPccnn, 10},
-  {DI, 4},
-  {CALLccnn, 10},
-  {PUSHqq, 11},
-  {ORn, 7},
-  {RSTp, 11},
-  {RETcc, 5},
-  {LDSPHL, 6},
-  {JPccnn, 10},
-  {EI, 4},
-  {CALLccnn, 10},
-  {LDIY, 19},
-  {CPn, 7},
-  {RSTp, 11}
+opc_t opc_tbl[0x100] = {
+    {opc_NOP, 4},
+    {opc_LDddnn, 10},
+    {opc_LDBCA, 7},
+    {opc_INCss, 6},
+    {opc_INCr, 4},
+    {opc_DECr, 4},
+    {opc_LDrn, 7},
+    {opc_RLCA, 4},
+    {opc_EXAFAFr, 4},
+    {opc_ADDHLss, 11},
+    {opc_LDABC, 7},
+    {opc_DECss, 6},
+    {opc_INCr, 4},
+    {opc_DECr, 4},
+    {opc_LDrn, 7},
+    {opc_RRCA, 4},
+    {opc_DJNZe, 13}, // 0x10
+    {opc_LDddnn, 10},
+    {opc_LDDEA, 7},
+    {opc_INCss, 6},
+    {opc_INCr, 4},
+    {opc_DECr, 4},
+    {opc_LDrn, 7},
+    {opc_RLA, 4},
+    {opc_JRe, 12},
+    {opc_ADDHLss, 11},
+    {opc_LDADE, 7},
+    {opc_DECss, 6},
+    {opc_INCr, 4},
+    {opc_DECr, 4},
+    {opc_LDrn, 7},
+    {opc_RRA, 4},
+    {opc_JRNZe, 12}, // 0x20
+    {opc_LDddnn, 10},
+    {opc_LDnnHL, 16},
+    {opc_INCss, 6},
+    {opc_INCr, 4},
+    {opc_DECr, 4},
+    {opc_LDrn, 7},
+    {opc_DAA, 4},
+    {opc_JRZe, 12},
+    {opc_ADDHLss, 11},
+    {opc_LDHLnn, 16},
+    {opc_DECss, 6},
+    {opc_INCr, 4},
+    {opc_DECr, 4},
+    {opc_LDrn, 7},
+    {opc_CPL, 4},
+    {opc_JRNCe, 12}, // 0x30
+    {opc_LDddnn, 10},
+    {opc_LDnnA, 13},
+    {opc_INCss, 6},
+    {opc_INCHL, 11},
+    {opc_DECHL, 11},
+    {opc_LDHLn, 10},
+    {opc_SCF, 4},
+    {opc_JRCe, 12},
+    {opc_ADDHLss, 11},
+    {opc_LDAnn, 13},
+    {opc_DECss, 6},
+    {opc_INCr, 4},
+    {opc_DECr, 4},
+    {opc_LDrn, 7},
+    {opc_CCF, 4},
+    {opc_LDrr, 4}, // 0X40
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrHL, 7},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrHL, 7},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4}, // 0x50
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrHL, 7},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrHL, 7},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4}, // 0x60
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrHL, 7},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrHL, 7},
+    {opc_LDrr, 4},
+    {opc_LDHLr, 7}, // 0x70
+    {opc_LDHLr, 7},
+    {opc_LDHLr, 7},
+    {opc_LDHLr, 7},
+    {opc_LDHLr, 7},
+    {opc_LDHLr, 7},
+    {opc_HALT, 4},
+    {opc_LDHLr, 7},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrr, 4},
+    {opc_LDrHL, 7},
+    {opc_LDrr, 4},
+    {opc_ADDAr, 4}, // 0x80
+    {opc_ADDAr, 4},
+    {opc_ADDAr, 4},
+    {opc_ADDAr, 4},
+    {opc_ADDAr, 4},
+    {opc_ADDAr, 4},
+    {opc_ADDAHL, 7},
+    {opc_ADDAr, 4},
+    {opc_ADCAr, 4},
+    {opc_ADCAr, 4},
+    {opc_ADCAr, 4},
+    {opc_ADCAr, 4},
+    {opc_ADCAr, 4},
+    {opc_ADCAr, 4},
+    {opc_ADCAHL, 7},
+    {opc_ADCAr, 4},
+    {opc_SUBAr, 4}, // 0x90
+    {opc_SUBAr, 4},
+    {opc_SUBAr, 4},
+    {opc_SUBAr, 4},
+    {opc_SUBAr, 4},
+    {opc_SUBAr, 4},
+    {opc_SUBAHL, 7},
+    {opc_SUBAr, 4},
+    {opc_SBCAr, 4},
+    {opc_SBCAr, 4},
+    {opc_SBCAr, 4},
+    {opc_SBCAr, 4},
+    {opc_SBCAr, 4},
+    {opc_SBCAr, 4},
+    {opc_SBCAHL, 7},
+    {opc_SBCAr, 4},
+    {opc_ANDr, 4}, // 0xA0
+    {opc_ANDr, 4},
+    {opc_ANDr, 4},
+    {opc_ANDr, 4},
+    {opc_ANDr, 4},
+    {opc_ANDr, 4},
+    {opc_ANDHL, 7},
+    {opc_ANDr, 4},
+    {opc_XORr, 4},
+    {opc_XORr, 4},
+    {opc_XORr, 4},
+    {opc_XORr, 4},
+    {opc_XORr, 4},
+    {opc_XORr, 4},
+    {opc_XORHL, 7},
+    {opc_XORr, 4},
+    {opc_ORr, 4}, // 0xB0
+    {opc_ORr, 4},
+    {opc_ORr, 4},
+    {opc_ORr, 4},
+    {opc_ORr, 4},
+    {opc_ORr, 4},
+    {opc_ORHL, 7},
+    {opc_ORr, 4},
+    {opc_CPr, 4},
+    {opc_CPr, 4},
+    {opc_CPr, 4},
+    {opc_CPr, 4},
+    {opc_CPr, 4},
+    {opc_CPr, 4},
+    {opc_CPHL, 7},
+    {opc_CPr, 4},
+    {opc_RETcc, 5}, // 0xC0
+    {opc_POPqq, 10},
+    {opc_JPccnn, 10},
+    {opc_JPnn, 10},
+    {opc_CALLccnn, 10},
+    {opc_PUSHqq, 11},
+    {opc_ADDAn, 7},
+    {opc_RSTp, 11},
+    {opc_RETcc, 5},
+    {opc_RET, 10},
+    {opc_JPccnn, 10},
+    {opc_RLC, 8},
+    {opc_CALLccnn, 10},
+    {opc_CALLnn, 17},
+    {opc_ADCAn, 7},
+    {opc_RSTp, 11},
+    {opc_RETcc, 5}, // 0xD0
+    {opc_POPqq, 10},
+    {opc_JPccnn, 10},
+    {opc_OUTnA, 11},
+    {opc_CALLccnn, 10},
+    {opc_PUSHqq, 11},
+    {opc_SUBAn, 7},
+    {opc_RSTp, 11},
+    {opc_RETcc, 5},
+    {opc_EXX, 4},
+    {opc_JPccnn, 10},
+    {opc_INAn, 11},
+    {opc_CALLccnn, 10},
+    {opc_LDIX, 19},
+    {opc_SBCAn, 7},
+    {opc_RSTp, 11},
+    {opc_RETcc, 5}, // 0xE0
+    {opc_POPqq, 10},
+    {opc_JPccnn, 10},
+    {opc_EXSPHL, 19},
+    {opc_CALLccnn, 10},
+    {opc_PUSHqq, 11},
+    {opc_ANDn, 7},
+    {opc_RSTp, 11},
+    {opc_RETcc, 5},
+    {opc_JPHL, 4},
+    {opc_JPccnn, 10},
+    {opc_EXDEHL, 4},
+    {opc_CALLccnn, 10},
+    {opc_LDRIddnn, 9},
+    {opc_XORn, 7},
+    {opc_RSTp, 11},
+    {opc_RETcc, 5}, // 0xF0
+    {opc_POPqq, 10},
+    {opc_JPccnn, 10},
+    {opc_DI, 4},
+    {opc_CALLccnn, 10},
+    {opc_PUSHqq, 11},
+    {opc_ORn, 7},
+    {opc_RSTp, 11},
+    {opc_RETcc, 5},
+    {opc_LDSPHL, 6},
+    {opc_JPccnn, 10},
+    {opc_EI, 4},
+    {opc_CALLccnn, 10},
+    {opc_LDIY, 19},
+    {opc_CPn, 7},
+    {opc_RSTp, 11}
 };
