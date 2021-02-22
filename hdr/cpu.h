@@ -20,12 +20,12 @@
 // Carry flag indicates a carry from the high-order bit of the accumulator (B7).
 #define FLAG_CARRY_BIT  0
 
-#define GET_FLAG_SIGN(F) 	   ((F >> FLAG_SIGN_BIT) & 0x1)        // S
-#define GET_FLAG_ZERO(F) 	   ((F >> FLAG_ZERO_BIT) & 0x1)        // Z
-#define GET_FLAG_HCARRY(F)     ((F >> FLAG_HCARRY_BIT) & 0x1)      // H
-#define GET_FLAG_PARITY(F)     ((F >> FLAG_PARITY_BIT) & 0x1)      // P/V
-#define GET_FLAG_ADDSUB(F)     ((F >> FLAG_ADDSUB_BIT) & 0x1)      // N
-#define GET_FLAG_CARRY(F) 	   ((F >> FLAG_CARRY_BIT) & 0x1)       // C
+#define GET_FLAG_SIGN(cpu) 	   ((cpu->F >> FLAG_SIGN_BIT) & 0x1)   // S
+#define GET_FLAG_ZERO(cpu) 	   ((cpu->F >> FLAG_ZERO_BIT) & 0x1)   // Z
+#define GET_FLAG_HCARRY(cpu)   ((cpu->F >> FLAG_HCARRY_BIT) & 0x1) // H
+#define GET_FLAG_PARITY(cpu)   ((cpu->F >> FLAG_PARITY_BIT) & 0x1) // P/V
+#define GET_FLAG_ADDSUB(cpu)   ((cpu->F >> FLAG_ADDSUB_BIT) & 0x1) // N
+#define GET_FLAG_CARRY(cpu)    ((cpu->F >> FLAG_CARRY_BIT) & 0x1)  // C
 
 #define SET_FLAG_SIGN(cpu) 	   (cpu->F |= (1 << FLAG_SIGN_BIT))    // S
 #define SET_FLAG_ZERO(cpu) 	   (cpu->F |= (1 << FLAG_ZERO_BIT))    // Z

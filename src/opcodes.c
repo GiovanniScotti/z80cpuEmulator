@@ -1,5 +1,3 @@
-//#include <ncurses.h>
-
 #include "opcodes.h"
 #include "logger.h"
 
@@ -13,7 +11,7 @@ typedef enum {
 
 
 /*
-  TODO: Interrupts must be recognized during LDIR instruction iterations.
+  TODO: ADC, SUB, SBC. Start from ADD HL,ss.
   TODO: Check 16-bit arithmetic instructions
   TODO: DAA is missing, pag. 173.
   TODO: Complete IN and OUT, pag. 298.
@@ -58,7 +56,7 @@ static void opc_testZFlag8(cpu_t *cpu, uint8_t val) {
 
 
 // Tests the given 16-bit value and sets Z flag accordingly.
-static void opc_testZFlag8(cpu_t *cpu, uint16_t val) {
+static void opc_testZFlag16(cpu_t *cpu, uint16_t val) {
     if (val == 0)
         SET_FLAG_ZERO(cpu);
     else
@@ -87,43 +85,110 @@ static void opc_testSFlag16(cpu_t *cpu, uint16_t val) {
 }
 
 
+// Tests if the given 8-bit operands generate an half carry and sets the cpu
+// status register accordingly. Note that an extra argument specifies
+// the operation on the two operands.
+static void opc_testHFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2, bool isSub) {
+    if (!isSub) {
+        // Half-carry for additions.
+        if (((op1 & 0xF) + (op2 & 0xF)) & 0x10)
+            SET_FLAG_HCARRY(cpu);
+        else
+            RESET_FLAG_HCARRY(cpu);
+    } else {
+        // Half-carry for subtractions.
+        if (((op1 & 0xF) - (op2 & 0xF)) < 0)
+            SET_FLAG_HCARRY(cpu);
+        else
+            RESET_FLAG_HCARRY(cpu);
+    }
+    return;
+}
+
+
+// Tests if the given 8-bit operands generate a carry and sets the cpu
+// status register accordingly.
+static void opc_testCFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2, bool isSub) {
+    uint16_t op1_ext = op1;
+    uint16_t op2_ext = op2;
+
+    if (!isSub) {
+        // Carry for additions.
+        if (((op1_ext & 0xFF) + (op2_ext & 0xFF)) & 0x100)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
+    } else {
+        // Carry for subtractions.
+        if (((op1_ext & 0xFF) - (op2_ext & 0xFF)) < 0)
+            SET_FLAG_HCARRY(cpu);
+        else
+            RESET_FLAG_HCARRY(cpu);
+    }
+    return;
+}
+
+
+// Tests if the given 8-bit operands generate an overflow and sets the cpu
+// status register accordingly (P/V flag).
+static void opc_testVFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2, bool isSub) {
+    if (!isSub) {
+        // Addition overflow. Two operands with different signs never cause
+        // overflow. Similar signs and a result with different sign points
+        // out an overflow.
+        if (!(opc_isNegative8(op1) ^ opc_isNegative8(cpu))) {
+            // Same signs.
+            uint8_t res = op1 + op2;
+            if (opc_isNegative8(op1) ^ opc_isNegative8(res)) {
+                // Result has different sign.
+                SET_FLAG_PARITY(cpu);
+            } else
+                RESET_FLAG_PARITY(cpu);
+        } else
+            RESET_FLAG_PARITY(cpu);
+    } else {
+        // Subtraction overflow. Same signs never cause overflow.
+        // If the minuend and the result have different signs, an
+        // overflow occurred.
+        if (opc_isNegative8(op1) ^ opc_isNegative8(cpu)) {
+            // Different signs.
+            uint8_t res = op1 - op2;
+            if (opc_isNegative8(op1) ^ opc_isNegative8(res)) {
+                // Result has different sign w.r.t the minuend.
+                SET_FLAG_PARITY(cpu);
+            } else
+                RESET_FLAG_PARITY(cpu);
+        } else
+            RESET_FLAG_PARITY(cpu);
+    }
+    return;
+}
+
+
+// Tests the given 8-bit operand parity and sets the cpu status register
+// accordingly (P/V flag).
+static void opc_testPFlag8(cpu_t *cpu, uint8_t val) {
+    uint32_t set_bits = 0;
+    while (val > 0) {
+        if ((val & 1) == 1)
+            set_bits++;
+        val = val >> 1;
+    }
+
+    if (set_bits & 0x1)
+        RESET_FLAG_PARITY(cpu); // Odd.
+    else
+        SET_FLAG_PARITY(cpu); // Even.
+    return;
+}
+
+
+
 /*
-
-void testHalfCarry_8(u8 val1, u8 val2, u8 carry) {
-  if((((val1 & 0x0F) + (val2 & 0x0F) + (carry & 0x0F)) & 0x10) == 0x10) {
-    z80.F |= FLAG_HCARRY;
-  }
-  else {
-    z80.F &= ~(FLAG_HCARRY);
-  }
-}
-
-
-void testCarry_8(u8 val1, u8 val2, u8 carry) {
-  // Avoid overflow in C and test carry condition
-  if(val1 > 0xFF - val2 - carry) z80.F |= FLAG_CARRY;
-  else                           z80.F &= ~(FLAG_CARRY);
-}
-
-
 void testCarry_16(u16 val1, u16 val2, u16 carry) {
   // Avoid overflow in C and test carry condition
   if(val1 > 0xFFFF - val2 - carry) z80.F |= FLAG_CARRY;
   else                             z80.F &= ~(FLAG_CARRY);
-}
-
-
-void testOverflow_8(u8 val1, u8 val2, u8 res) {
-  if(((val1 ^ val2) ^ 0x80) & 0x80) {
-    if((res ^ val1) & 0x80) {
-      z80.F |= FLAG_PARITY;
-    }
-    else {
-      z80.F &= ~(FLAG_PARITY);
-    }
-  } else {
-    z80.F &= ~(FLAG_PARITY);
-  }
 }
 
 
@@ -138,21 +203,6 @@ void testOverflow_16(u16 val1, u16 val2, u16 res) {
   } else {
     z80.F &= ~(FLAG_PARITY);
   }
-}
-
-
-void testParity_8(u8 val) {
-  int set_bits = 0;
-  while(val > 0) {
-    if((val & 1) == 1)
-      set_bits++;
-    val = val >> 1;
-  }
-
-  if(!(set_bits % 2))
-    z80.F |= FLAG_PARITY;
-  else
-    z80.F &= ~(FLAG_PARITY);
 }
 
 
@@ -428,30 +478,25 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         cpu_write(cpu, ((cpu->IX >> 8) & 0xFF), cpu->SP + 1);
         cpu->IX = (valSPL | (valSPH << 8));
         LOG_DEBUG("Executed EX (SP),IX SP=0x%04X\n", cpu->SP);
-        return;
     }
 
-  // This is ADD A, (IX+d) instruction
-  else if(follByte == 0x86) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 res = z80.A + value;
+    // ADD A,(IX+d) instruction.
+    else if (next_opc == 0x86) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A + data;
 
-    testZero_8(res);
-    testSign_8(res);
-    testHalfCarry_8(z80.A, value, 0);
-    rstAddSub();
-    testCarry_8(z80.A, value, 0);
-    testOverflow_8(z80.A, value, res);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data, 0);
+        opc_testVFlag8(cpu, cpu->A, data, 0);
+        RESET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, data, 0);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "ADD A, (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed ADD A,(IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
   // This is ADC A, (IX+d) instruction
   else if(follByte == 0x8E) {
@@ -525,139 +570,120 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
     }
   }
 
-  // This is AND (IX+d) instruction
-  else if(follByte == 0xA6) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 res = z80.A & value;
+    // AND (IX+d) instruction.
+    else if (next_opc == 0xA6) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A & data;
 
-    testZero_8(res);
-    testSign_8(res);
-    rstAddSub();
-    testParity_8(res);
-    z80.F &= ~(FLAG_CARRY);
-    z80.F |= (FLAG_HCARRY);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        SET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
+        RESET_FLAG_CARRY(cpu);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "AND (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed AND (IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
-  // This is OR (IX+d) instruction
-  else if(follByte == 0xB6) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 res = z80.A | value;
+    // OR (IX+d) instruction.
+    else if (next_opc == 0xB6) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A | data;
 
-    testZero_8(res);
-    testSign_8(res);
-    rstAddSub();
-    testParity_8(res);
-    z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
+        RESET_FLAG_CARRY(cpu);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "OR (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed OR (IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
-  // This is XOR (IX+d) instruction
-  else if(follByte == 0xAE) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 res = z80.A ^ value;
+    // XOR (IX+d) instruction.
+    else if (next_opc == 0xAE) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A ^ data;
 
-    testZero_8(res);
-    testSign_8(res);
-    rstAddSub();
-    testParity_8(res);
-    z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
+        RESET_FLAG_CARRY(cpu);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "XOR (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed XOR (IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
-  // This is CP (IX+d) instruction
-  else if(follByte == 0xBE) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 complVal = ~value + 1;
-    u8 res = z80.A + complVal;
+    // CP (IX+d) instruction.
+    else if (next_opc == 0xBE) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A - data;
 
-    testSign_8(res);
-    testZero_8(res);
-    setAddSub();
-    testOverflow_8(z80.A, complVal, res);
-    testHalfCarry_8(z80.A, complVal, 0);
-    testCarry_8(z80.A, complVal, 0);
-    invertHC();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data, 1);
+        opc_testVFlag8(cpu, cpu->A, data, 1);
+        SET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, data, 1);
 
-    if(logInstr) {
-      fprintf(fpLog, "CP (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        LOG_DEBUG("Executed CP (IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
-  // This is INC (IX+d) instruction
-  else if(follByte == 0x34) {
-    opTbl[0xDD].TStates = 23;
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 res = value + 1;
+    // INC (IX+d) instruction.
+    else if (next_opc == 0x34) {
+        opc_tbl[0xDD].TStates = 23;
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = data + 1;
 
-    testSign_8(res);
-    testZero_8(res);
-    testHalfCarry_8(value, 1, 0);
-    testOverflow_8(value, 1, res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, data, 1, 0);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.IX + extended_d);
-    if(logInstr) {
-      fprintf(fpLog, "INC (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        if (data == 0x7F)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        cpu_write(cpu, res, addr);
+        LOG_DEBUG("Executed INC (IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
-  // This is DEC (IX+d) instruction
-  else if(follByte == 0x35) {
-    opTbl[0xDD].TStates = 23;
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 complDec = 0xFF;	// -1
-    u8 res = value + complDec;
+    // DEC (IX+d) instruction.
+    else if (next_opc == 0x35) {
+        opc_tbl[0xDD].TStates = 23;
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = data - 1;
 
-    testSign_8(res);
-    testZero_8(res);
-    testHalfCarry_8(value, complDec, 0);
-    testOverflow_8(value, complDec, res);
-    setAddSub();
-    invertHC();
-    z80.F ^= (FLAG_CARRY);	// De-invert carry flag
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, data, 1, 1);
+        SET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.IX + extended_d);
-    if(logInstr) {
-      fprintf(fpLog, "DEC (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        if (data == 0x80)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        cpu_write(cpu, res, addr);
+        LOG_DEBUG("Executed DEC (IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
   // This is ADD IX, pp instruction
   else if((follByte & 0xCF) == 0x09) {
@@ -994,7 +1020,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
     // LD IY,nn instruction.
     else if (next_opc == 0x21) {
-        opc_tbl[0xDD].TStates = 14;
+        opc_tbl[0xFD].TStates = 14;
         uint16_t nn = opc_fetch16(cpu);
         cpu->IY = nn;
         LOG_DEBUG("Executed LD IY,0x%04X\n", nn);
@@ -1002,7 +1028,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
     // LD IY,(nn) instruction.
     else if (next_opc == 0x2A) {
-        opc_tbl[0xDD].TStates = 20;
+        opc_tbl[0xFD].TStates = 20;
         uint16_t addr = opc_fetch16(cpu);
         cpu->IY = (cpu_read(cpu, addr) | (cpu_read(cpu, addr + 1) << 8));
         LOG_DEBUG("Executed LD IY,(0x%04X)\n", addr);
@@ -1010,7 +1036,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
     // LD (nn),IY instruction.
     else if (next_opc == 0x22) {
-        opc_tbl[0xDD].TStates = 20;
+        opc_tbl[0xFD].TStates = 20;
         uint16_t addr = opc_fetch16(cpu);
         cpu_write(cpu, (cpu->IY & 0xFF), addr);
         cpu_write(cpu, ((cpu->IY >> 8) & 0xFF), addr + 1);
@@ -1019,58 +1045,53 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
     // LD SP,IY instruction.
     else if (next_opc == 0xF9) {
-        opc_tbl[0xDD].TStates = 10;
+        opc_tbl[0xFD].TStates = 10;
         cpu->SP = cpu->IY;
         LOG_DEBUG("Executed LD SP,IY\n");
     }
 
     // PUSH IY instruction.
     else if (next_opc == 0xE5) {
-        opc_tbl[0xDD].TStates = 15;
+        opc_tbl[0xFD].TStates = 15;
         cpu_stackPush(cpu, cpu->IY);
         LOG_DEBUG("Executed PUSH IY\n");
     }
 
     // POP IY instruction.
     else if (next_opc == 0xE1) {
-        opc_tbl[0xDD].TStates = 14;
+        opc_tbl[0xFD].TStates = 14;
         cpu->IY = cpu_stackPop(cpu);
         LOG_DEBUG("POP IY\n");
     }
 
     // EX (SP),IY instruction.
     else if (next_opc == 0xE3) {
-        opc_tbl[0xDD].TStates = 23;
+        opc_tbl[0xFD].TStates = 23;
         uint8_t valSPL = cpu_read(cpu, cpu->SP);
         uint8_t valSPH = cpu_read(cpu, cpu->SP + 1);
         cpu_write(cpu, (cpu->IY & 0xFF), cpu->SP);
         cpu_write(cpu, ((cpu->IY >> 8) & 0xFF), cpu->SP + 1);
         cpu->IY = (valSPL | (valSPH << 8));
         LOG_DEBUG("Executed EX (SP),IY SP=0x%04X\n", cpu->SP);
-        return;
     }
 
-  // This is ADD A, (IY+d) instruction
-  else if(follByte == 0x86){
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 res = z80.A + value;
+    // ADD A,(IY+d) instruction.
+    else if (next_opc == 0x86){
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A + data;
 
-    testZero_8(res);
-    testSign_8(res);
-    testHalfCarry_8(z80.A, value, 0);
-    rstAddSub();
-    testCarry_8(z80.A, value, 0);
-    testOverflow_8(z80.A, value, res);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data, 0);
+        opc_testVFlag8(cpu, cpu->A, data, 0);
+        RESET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, data, 0);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "ADD A, (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed ADD A,(IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
   // This is ADC A, (IY+d) instruction
   else if(follByte == 0x8E){
@@ -1144,139 +1165,120 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
     }
   }
 
-  // This is AND (IY+d) instruction
-  else if(follByte == 0xA6) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 res = z80.A & value;
+    // AND (IY+d) instruction.
+    else if (next_opc == 0xA6) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A & data;
 
-    testZero_8(res);
-    testSign_8(res);
-    rstAddSub();
-    testParity_8(res);
-    z80.F &= ~(FLAG_CARRY);
-    z80.F |= (FLAG_HCARRY);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        SET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
+        RESET_FLAG_CARRY(cpu);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "AND (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed AND (IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
-  // This is OR (IY+d) instruction
-  else if(follByte == 0xB6) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 res = z80.A | value;
+    // OR (IY+d) instruction.
+    else if (next_opc == 0xB6) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A | data;
 
-    testZero_8(res);
-    testSign_8(res);
-    rstAddSub();
-    testParity_8(res);
-    z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
+        RESET_FLAG_CARRY(cpu);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "OR (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed OR (IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
-  // This is XOR (IY+d) instruction
-  else if(follByte == 0xAE) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 res = z80.A ^ value;
+    // XOR (IY+d) instruction.
+    else if (next_opc == 0xAE) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A ^ data;
 
-    testZero_8(res);
-    testSign_8(res);
-    rstAddSub();
-    testParity_8(res);
-    z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
+        RESET_FLAG_CARRY(cpu);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "XOR (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed XOR (IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
-  // This is CP (IY+d) instruction
-  else if(follByte == 0xBE) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 complVal = ~value + 1;
-    u8 res = z80.A + complVal;
+    // CP (IY+d) instruction.
+    else if (next_opc == 0xBE) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A - data;
 
-    testSign_8(res);
-    testZero_8(res);
-    setAddSub();
-    testOverflow_8(z80.A, complVal, res);
-    testHalfCarry_8(z80.A, complVal, 0);
-    testCarry_8(z80.A, complVal, 0);
-    invertHC();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data, 1);
+        opc_testVFlag8(cpu, cpu->A, data, 1);
+        SET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, data, 1);
 
-    if(logInstr) {
-      fprintf(fpLog, "CP (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        LOG_DEBUG("Executed CP (IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
-  // This is INC (IY+d) instruction
-  else if(follByte == 0x34) {
-    opTbl[0xFD].TStates = 23;
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 res = value + 1;
+    // INC (IY+d) instruction.
+    else if (next_opc == 0x34) {
+        opc_tbl[0xFD].TStates = 23;
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = data + 1;
 
-    testSign_8(res);
-    testZero_8(res);
-    testHalfCarry_8(value, 1, 0);
-    testOverflow_8(value, 1, res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, data, 1, 0);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.IY + extended_d);
-    if(logInstr) {
-      fprintf(fpLog, "INC (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        if (data == 0x7F)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        cpu_write(cpu, res, addr);
+        LOG_DEBUG("Executed INC (IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
-  // This is DEC (IY+d) instruction
-  else if(follByte == 0x35) {
-    opTbl[0xFD].TStates = 23;
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 complDec = 0xFF; // -1
-    u8 res = value + complDec;
+    // DEC (IY+d) instruction.
+    else if (next_opc == 0x35) {
+        opc_tbl[0xFD].TStates = 23;
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = data - 1;
 
-    testSign_8(res);
-    testZero_8(res);
-    testHalfCarry_8(value, complDec, 0);
-    testOverflow_8(value, complDec, res);
-    setAddSub();
-    invertHC();
-    z80.F ^= (FLAG_CARRY);	// De-invert carry flag
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, data, 1, 1);
+        SET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.IY + extended_d);
-    if(logInstr) {
-      fprintf(fpLog, "DEC (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        if (data == 0x80)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        cpu_write(cpu, res, addr);
+        LOG_DEBUG("Executed DEC (IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
   // This is ADD IY, rr instruction
   else if((follByte & 0xCF) == 0x09) {
@@ -1771,7 +1773,6 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
             opc_tbl[0xED].TStates = 16;
 
         LOG_DEBUG("Executed LDIR\n");
-        return;
     }
 
     // LDD instruction.
@@ -1791,7 +1792,6 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
             RESET_FLAG_PARITY(cpu);
 
         LOG_DEBUG("Executed LDD\n");
-        return;
     }
 
     // LDDR instruction.
@@ -1813,7 +1813,6 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
             opc_tbl[0xED].TStates = 16;
 
         LOG_DEBUG("Executed LDDR\n");
-        return;
     }
 
     // CPI instruction.
@@ -1826,7 +1825,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data_HL, 0);
+        opc_testHFlag8(cpu, cpu->A, data_HL, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1835,149 +1834,132 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
             RESET_FLAG_PARITY(cpu);
 
         LOG_DEBUG("Executed CPI\n");
-        return;
     }
 
-  // This is CPIR instruction
-  else if(follByte == 0xB1) {
-    u8 valueHL = readByte(z80.HL);
-    u8 complHL = ~valueHL + 1;
-    u8 tmp = z80.A + complHL; // Perform subtraction
-    z80.HL++;
-    z80.BC--;
+    // CPIR instruction.
+    else if (next_opc == 0xB1) {
+        uint8_t data_HL = cpu_read(cpu, cpu->HL);
+        uint8_t res = cpu->A - data_HL;
+        cpu->HL++;
+        cpu->BC--;
 
-    testZero_8(tmp);
-    testSign_8(tmp);
-    testHalfCarry_8(z80.A, complHL, 0);
-    setAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data_HL, 1);
 
-    if(z80.BC == 0) {
-      z80.F &= ~(FLAG_PARITY);
-    }
-    else {
-      z80.F |= FLAG_PARITY;
-      z80.PC -= 2;
-    }
+        SET_FLAG_ADDSUB(cpu);
+        if (cpu->BC)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
 
-    if((z80.BC != 0) && (tmp != 0)) {
-      opTbl[0xED].TStates = 21;
-    }
-    else {
-      opTbl[0xED].TStates = 16;
-    }
+        // If decrementing causes BC to go to 0 or if A = (HL),
+        // the instruction is terminated.
+        if (cpu->BC && res) {
+            opc_tbl[0xED].TStates = 21;
+            cpu->PC -= 2;
+        } else
+            opc_tbl[0xED].TStates = 16;
 
-    if(logInstr) {
-      writeLog("CPIR\n");
-    }
-  }
-
-  // This is CPD instruction
-  else if(follByte == 0xA9) {
-    opTbl[0xED].TStates = 16;
-    u8 valueHL = readByte(z80.HL);
-    u8 complHL = ~valueHL + 1;
-    u8 tmp = z80.A + complHL; // Perform subtraction
-    z80.HL--;
-    z80.BC--;
-
-    testZero_8(tmp);
-    testSign_8(tmp);
-    testHalfCarry_8(z80.A, complHL, 0);
-    setAddSub();
-
-    if(z80.BC == 0) {
-      z80.F &= ~(FLAG_PARITY);
-    }
-    else {
-      z80.F |= FLAG_PARITY;
+        LOG_DEBUG("Executed CPIR\n");
     }
 
-    if(logInstr) {
-      writeLog("CPD\n");
-    }
-  }
+    // This is CPD instruction
+    else if (next_opc == 0xA9) {
+        opc_tbl[0xED].TStates = 16;
+        uint8_t data_HL = cpu_read(cpu, cpu->HL);
+        uint8_t res = cpu->A - data_HL;
+        cpu->HL--;
+        cpu->BC--;
 
-  // This is CPDR instruction
-  else if(follByte == 0xB9) {
-    u8 valueHL = readByte(z80.HL);
-    u8 complHL = ~valueHL + 1;
-    u8 tmp = z80.A - complHL;
-    z80.HL--;
-    z80.BC--;
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data_HL, 1);
 
-    testZero_8(tmp);
-    testSign_8(tmp);
-    testHalfCarry_8(z80.A, complHL, 0);
-    setAddSub();
+        SET_FLAG_ADDSUB(cpu);
+        if (cpu->BC)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
 
-    if(z80.BC == 0) {
-      z80.F &= ~(FLAG_PARITY);
-    }
-    else {
-      z80.F |= FLAG_PARITY;
-      z80.PC -= 2;
+        LOG_DEBUG("Executed CPD\n");
     }
 
-    if((z80.BC != 0) && (tmp != 0)) {
-      opTbl[0xED].TStates = 21;
+    // CPDR instruction.
+    else if (next_opc == 0xB9) {
+        uint8_t data_HL = cpu_read(cpu, cpu->HL);
+        uint8_t res = cpu->A - data_HL;
+        cpu->HL--;
+        cpu->BC--;
+
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data_HL, 1);
+
+        SET_FLAG_ADDSUB(cpu);
+        if (cpu->BC)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        // If decrementing causes BC to go to 0 or if A = (HL),
+        // the instruction is terminated.
+        if (cpu->BC && res) {
+            opc_tbl[0xED].TStates = 21;
+            cpu->PC -= 2;
+        } else
+            opc_tbl[0xED].TStates = 16;
+
+        LOG_DEBUG("Executed CPDR\n");
     }
-    else {
-      opTbl[0xED].TStates = 16;
+
+    // NEG instruction.
+    else if (next_opc == 0x44) {
+        opc_tbl[0xED].TStates = 8;
+        uint8_t res = 0 - cpu->A;
+
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, 0, cpu->A, 1);
+        SET_FLAG_ADDSUB(cpu);
+
+        if (data == 0x80)
+            SET_FLAG_PARITY(cpu);
+        else
+            RESET_FLAG_PARITY(cpu);
+
+        if (cpu->A)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
+
+        cpu->A = res;
+        LOG_DEBUG("Executed NEG\n");
     }
 
-    if(logInstr) {
-      writeLog("CPDR\n");
+    // IM 0 instruction.
+    else if (next_opc == 0x46) {
+        opc_tbl[0xED].TStates = 8;
+        cpu->IM = 0;
+
+        LOG_DEBUG("Executed IM 0\n");
     }
-  }
 
-  // This is NEG instruction
-  else if(follByte == 0x44) {
-    opTbl[0xED].TStates = 8;
-    u8 complVal = ~z80.A + 1;
-    u8 res = 0 + complVal;
+    // IM 1 instruction.
+    else if (next_opc == 0x56) {
+        opc_tbl[0xED].TStates = 8;
+        cpu->IM = 1;
 
-    testZero_8(res);
-    testSign_8(res);
-    setAddSub();
-    testOverflow_8(0, complVal, res);
-    testHalfCarry_8(0, complVal, 0);
-    testCarry_8(0, complVal, 0);
-    invertHC();
-
-    z80.A = res;
-    if(logInstr) {
-      writeLog("NEG\n");
+        LOG_DEBUG("Executed IM 1\n");
     }
-  }
 
-  // This is IM 0 instruction
-  else if(follByte == 0x46) {
-    opTbl[0xED].TStates = 8;
-    z80.IM = 0;
+    // IM 2 instruction.
+    else if (next_opc == 0x5E) {
+        opc_tbl[0xED].TStates = 8;
+        cpu->IM = 2;
 
-    if(logInstr) {
-      writeLog("IM 0\n");
+        LOG_DEBUG("Executed IM 2\n");
     }
-  }
-
-  // This is IM 1 instruction
-  else if(follByte == 0x56) {
-    opTbl[0xED].TStates = 8;
-    z80.IM = 1;
-
-    if(logInstr) {
-      writeLog("IM 1\n");
-    }
-  }
-
-  // This is IM 2 instruction
-  else if(follByte == 0x5E) {
-    opTbl[0xED].TStates = 8;
-    z80.IM = 2;
-    if(logInstr) {
-      writeLog("IM 2\n");
-    }
-  }
 
   // This is ADC HL, ss instruction
   else if((follByte & 0xCF) == 0x4A) {
@@ -2258,23 +2240,22 @@ static void opc_EXSPHL(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is ADD A, r instruction
-void ADDAr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 value = readReg(src);
-  u8 res = z80.A + value;
+// ADD A,r instruction.
+static void opc_ADDAr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t res = cpu->A + data;
 
-  testZero_8(res);
-  testSign_8(res);
-  testHalfCarry_8(z80.A, value, 0);
-  z80.F &= ~(FLAG_ADDSUB);
-  testCarry_8(z80.A, value, 0);
-  testOverflow_8(z80.A, value, res);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, data, 0);
+    opc_testVFlag8(cpu, cpu->A, data, 0);
+    RESET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, data, 0);
 
-  z80.A = res;
-  if(logInstr) {
-    writeLog("ADD A, "); logReg8(src); writeLog("\n");
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed ADD A,%s\n", opc_regName8(src));
+    return;
 }
 
 
@@ -2300,22 +2281,21 @@ void SUBAr(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is ADD A, n instruction
-void ADDAn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  u8 res = z80.A + n;
+// ADD A,n instruction.
+static void opc_ADDAn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    uint8_t res = cpu->A + n;
 
-  testZero_8(res);
-  testSign_8(res);
-  testHalfCarry_8(z80.A, n, 0);
-  z80.F &= ~(FLAG_ADDSUB);
-  testCarry_8(z80.A, n, 0);
-  testOverflow_8(z80.A, n, res);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, n, 0);
+    opc_testVFlag8(cpu, cpu->A, n, 0);
+    RESET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, n, 0);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "ADD A, %02X\n", n);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed ADD A,0x%02X\n", n);
+    return;
 }
 
 
@@ -2340,22 +2320,21 @@ void SUBAn(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is ADD A, (HL) instruction
-void ADDAHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 res = z80.A + value;
+// ADD A,(HL) instruction.
+static void opc_ADDAHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t res = cpu->A + data;
 
-  testZero_8(res);
-  testSign_8(res);
-  testHalfCarry_8(z80.A, value, 0);
-  z80.F &= ~(FLAG_ADDSUB);
-  testCarry_8(z80.A, value, 0);
-  testOverflow_8(z80.A, value, res);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, data, 0);
+    opc_testVFlag8(cpu, cpu->A, data, 0);
+    RESET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, data, 0);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "ADD A, (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed ADD A,(HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
@@ -2380,24 +2359,23 @@ void SUBAHL(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is ADC A, r instruction
-void ADCAr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 value = readReg(src);
-  u8 carry = (z80.F & FLAG_CARRY);
-  u8 res = z80.A + value + carry;
+// ADC A,r instruction.
+static void opc_ADCAr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t c = GET_FLAG_CARRY(cpu);
+    uint8_t res = cpu->A + data + c;
 
-  testZero_8(res);
-  testSign_8(res);
-  testHalfCarry_8(z80.A, value, carry);
-  rstAddSub();
-  testCarry_8(z80.A, value, carry);
-  testOverflow_8(z80.A, value, res);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    //opc_testHFlag8(cpu, cpu->A, n, c, 0);
+    //opc_testVFlag8(cpu, cpu->A, n, c, 0);
+    RESET_FLAG_ADDSUB(cpu);
+    //opc_testCFlag8(cpu, cpu->A, n);
 
-  z80.A = res;
-  if(logInstr) {
-    writeLog("ADC A, "); logReg8(src); writeLog("\n");
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed ADC A,%s\n", opc_regName8(src));
+    return;
 }
 
 
@@ -2508,318 +2486,313 @@ void SBCAHL(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is AND r instruction
-void ANDr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 value = readReg(src);
-  u8 res = z80.A & value;
+// AND r instruction.
+static void opc_ANDr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t res = cpu->A & data;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY);
-  z80.F |= (FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    SET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    writeLog("AND "); logReg8(src); writeLog("\n");
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed AND %s\n", opc_regName8(src));
+    return;
 }
 
 
-// This is AND n instruction
-void ANDn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  u8 res = z80.A & n;
+// AND n instruction.
+static void opc_ANDn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    uint8_t res = cpu->A & n;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY);
-  z80.F |= (FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    SET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "AND %02X\n", n);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed AND 0x%02X\n", n);
+    return;
 }
 
 
-// This is AND (HL) instruction
-void ANDHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 res = z80.A & value;
+// AND (HL) instruction.
+static void opc_ANDHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t res = cpu->A & data;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY);
-  z80.F |= (FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    SET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "AND (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed AND (HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
-// This is OR r instruction
-void ORr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 value = readReg(src);
-  u8 res = z80.A | value;
+// OR r instruction.
+static void opc_ORr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t res = cpu->A | data;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    RESET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    writeLog("OR "); logReg8(src); writeLog("\n");
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed OR %s\n", opc_regName8(src));
+    return;
 }
 
 
-// This is OR n instruction
-void ORn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  u8 res = z80.A | n;
+// OR n instruction.
+static void opc_ORn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    uint8_t res = cpu->A | n;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    RESET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "OR %02X\n", n);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed OR 0x%02X\n", n);
+    return;
 }
 
 
-// This is OR (HL) instruction
-void ORHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 res = z80.A | value;
+// OR (HL) instruction.
+static void opc_ORHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t res = cpu->A | data;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    RESET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "OR (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed OR (HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
-// This is XOR r instruction
-void XORr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 value = readReg(src);
-  u8 res = z80.A ^ value;
+// XOR r instruction.
+static void opc_XORr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t res = cpu->A ^ data;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    RESET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    writeLog("XOR "); logReg8(src); writeLog("\n");
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed XOR %s\n", opc_regName8(src));
+    return;
 }
 
 
-// This is XOR n instruction
-void XORn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  u8 res = z80.A ^ n;
+// XOR n instruction.
+static void opc_XORn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    uint8_t res = cpu->A ^ n;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    RESET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "XOR %02X\n", n);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed XOR 0x%02X\n", n);
+    return;
 }
 
 
-// This is XOR (HL) instruction
-void XORHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 res = z80.A ^ value;
+// XOR (HL) instruction.
+static void opc_XORHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t res = cpu->A ^ data;
 
-  testZero_8(res);
-  testSign_8(res);
-  rstAddSub();
-  testParity_8(res);
-  z80.F &= ~(FLAG_CARRY | FLAG_HCARRY);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    RESET_FLAG_HCARRY(cpu);
+    opc_testPFlag8(cpu, res);
+    RESET_FLAG_ADDSUB(cpu);
+    RESET_FLAG_CARRY(cpu);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "XOR (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed XOR (HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
-// This is CP r instruction
-void CPr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 value = readReg(src);
-  u8 complVal = ~value + 1;
-  u8 res = z80.A + complVal;
+// CP r instruction.
+static void opc_CPr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = cpu_read(cpu, src);
+    uint8_t res = cpu->A - data;
 
-  testSign_8(res);
-  testZero_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, complVal, res);
-  testHalfCarry_8(z80.A, complVal, 0);
-  testCarry_8(z80.A, complVal, 0);
-  invertHC();
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, data, 1);
+    opc_testVFlag8(cpu, cpu->A, data, 1);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, data, 1);
 
-  if(logInstr) {
-    writeLog("CP "); logReg8(src); writeLog("\n");
-  }
+    LOG_DEBUG("Executed CP %s\n", opc_regName8(src));
+    return;
 }
 
 
-// This is CP n instruction
-void CPn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  u8 complVal = ~n + 1;
-  u8 res = z80.A + complVal;
+// CP n instruction.
+static void opc_CPn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    uint8_t res = cpu->A - n;
 
-  testSign_8(res);
-  testZero_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, complVal, res);
-  testHalfCarry_8(z80.A, complVal, 0);
-  testCarry_8(z80.A, complVal, 0);
-  invertHC();
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, n, 1);
+    opc_testVFlag8(cpu, cpu->A, n, 1);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, n, 1);
 
-  if(logInstr) {
-    fprintf(fpLog, "CP %02X\n", n);
-  }
+    LOG_DEBUG("Executed CP 0x%02X\n", n);
+    return;
 }
 
 
-// This is CP (HL) instruction
-void CPHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 complVal = ~value + 1;
-  u8 res = z80.A + complVal;
+// CP (HL) instruction.
+static void opc_CPHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t res = cpu->A - data;
 
-  testSign_8(res);
-  testZero_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, complVal, res);
-  testHalfCarry_8(z80.A, complVal, 0);
-  testCarry_8(z80.A, complVal, 0);
-  invertHC();
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, data, 1);
+    opc_testVFlag8(cpu, cpu->A, data, 1);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, data, 1);
 
-  if(logInstr) {
-    fprintf(fpLog, "CP (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    LOG_DEBUG("Executed CP (HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
-// This is INC r instruction
-void INCr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = ((opcode >> 3) & 0x07);
-  u8 value = readReg(src);
-  u8 res = value + 1;
+// INC r instruction.
+static void opc_INCr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = ((opcode >> 3) & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t res = data + 1;
 
-  testSign_8(res);
-  testZero_8(res);
-  testHalfCarry_8(value, 1, 0);
-  testOverflow_8(value, 1, res);
-  rstAddSub();
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, data, 1, 0);
+    RESET_FLAG_ADDSUB(cpu);
 
-  writeReg(res, src);
-  if(logInstr) {
-    writeLog("INC "); logReg8(src); writeLog("\n");
-  }
+    if (data == 0x7F)
+        SET_FLAG_PARITY(cpu);
+    else
+        RESET_FLAG_PARITY(cpu);
+
+    opc_writeReg(cpu, src, res);
+    LOG_DEBUG("Executed INC %s\n", opc_regName8(src));
+    return;
 }
 
 
-// This is INC (HL) instruction
-void INCHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 res = value + 1;
+// INC (HL) instruction.
+static void opc_INCHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t res = data + 1;
 
-  testSign_8(res);
-  testZero_8(res);
-  testHalfCarry_8(value, 1, 0);
-  testOverflow_8(value, 1, res);
-  rstAddSub();
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, data, 1, 0);
+    RESET_FLAG_ADDSUB(cpu);
 
-  writeByte(res, z80.HL);
-  if(logInstr) {
-    fprintf(fpLog, "INC (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    if (data == 0x7F)
+        SET_FLAG_PARITY(cpu);
+    else
+        RESET_FLAG_PARITY(cpu);
+
+    cpu_write(cpu, res, cpu->HL);
+    LOG_DEBUG("Executed INC (HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
-// This is DEC r instruction
-void DECr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = ((opcode >> 3) & 0x07);
-  u8 value = readReg(src);
-  u8 complDec = 0xFF; // -1
-  u8 res = value + complDec;
+// DEC r instruction.
+static void opc_DECr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = ((opcode >> 3) & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t res = data - 1;
 
-  testSign_8(res);
-  testZero_8(res);
-  testHalfCarry_8(value, complDec, 0);
-  testOverflow_8(value, complDec, res);
-  setAddSub();
-  invertHC();
-  z80.F ^= (FLAG_CARRY);	// De-invert carry flag
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, data, 1, 1);
+    SET_FLAG_ADDSUB(cpu);
 
-  writeReg(res, src);
-  if(logInstr) {
-    writeLog("DEC "); logReg8(src); writeLog("\n");
-  }
+    if (data == 0x80)
+        SET_FLAG_PARITY(cpu);
+    else
+        RESET_FLAG_PARITY(cpu);
+
+    opc_writeReg(cpu, src, res);
+    LOG_DEBUG("Executed DEC %s\n", opc_regName8(src));
+    return;
 }
 
 
-// This is DEC (HL) instruction
-void DECHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 complDec = 0xFF; // -1
-  u8 res = value + complDec;
+// DEC (HL) instruction.
+static void opc_DECHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t res = data - 1;
 
-  testSign_8(res);
-  testZero_8(res);
-  testHalfCarry_8(value, complDec, 0);
-  testOverflow_8(value, complDec, res);
-  setAddSub();
-  invertHC();
-  z80.F ^= (FLAG_CARRY);	// De-invert carry flag
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, data, 1, 1);
+    SET_FLAG_ADDSUB(cpu);
 
-  writeByte(res, z80.HL);
-  if(logInstr) {
-    fprintf(fpLog, "DEC (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    if (data == 0x80)
+        SET_FLAG_PARITY(cpu);
+    else
+        RESET_FLAG_PARITY(cpu);
+
+    cpu_write(cpu, res, cpu->HL);
+    LOG_DEBUG("Executed DEC (HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
 // TODO: DAA
-void DAA(cpu_t *cpu, uint8_t opcode) {
-  die("[FATAL] DAA instruction not implemented yet.");
+static void opc_DAA(cpu_t *cpu, uint8_t opcode) {
+    LOG_FATAL("DAA instruction not implemented yet.");
+    exit(1);
 /*
   int top4 = (e8080.A >> 4) & 0xF;
   int bot4 = (e8080.A & 0xF);
@@ -2839,121 +2812,96 @@ void DAA(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is CPL instruction
-void CPL(cpu_t *cpu, uint8_t opcode) {
-  z80.A = ~(z80.A);
+// CPL instruction.
+static void opc_CPL(cpu_t *cpu, uint8_t opcode) {
+    cpu->A = ~(cpu->A);
 
-  setAddSub();
-  z80.F |= (FLAG_HCARRY);
+    SET_FLAG_HCARRY(cpu);
+    SET_FLAG_ADDSUB(cpu);
 
-  if(logInstr) {
-    writeLog("CPL\n");
-  }
+    LOG_DEBUG("Executed CPL\n");
+    return;
 }
 
 
-// This is CCF instruction
-void CCF(cpu_t *cpu, uint8_t opcode) {
-  rstAddSub();
+// CCF instruction.
+static void opc_CCF(cpu_t *cpu, uint8_t opcode) {
+    // Previous carry is copied to H.
+    // Carry is inverted.
+    if (GET_FLAG_CARRY(cpu)) {
+        SET_FLAG_HCARRY(cpu);
+        RESET_FLAG_CARRY(cpu);
+    } else {
+        RESET_FLAG_HCARRY(cpu);
+        SET_FLAG_CARRY(cpu);
+    }
 
-  if(z80.F & FLAG_CARRY)
-    z80.F |= (FLAG_HCARRY);
-  else
-    z80.F &= ~(FLAG_HCARRY);
+    RESET_FLAG_ADDSUB(cpu);
 
-  z80.F ^= (FLAG_CARRY);
-
-  if(logInstr) {
-    writeLog("CCF\n");
-  }
+    LOG_DEBUG("Executed CCF\n");
+    return;
 }
 
 
-// This is SCF instruction
-void SCF(cpu_t *cpu, uint8_t opcode) {
-  rstAddSub();
-  z80.F &= ~(FLAG_HCARRY);
-  z80.F |= (FLAG_CARRY);
+// SCF instruction.
+static void opc_SCF(cpu_t *cpu, uint8_t opcode) {
+    RESET_FLAG_HCARRY(cpu);
+    RESET_FLAG_ADDSUB(cpu);
+    SET_FLAG_CARRY(cpu);
 
-  if(logInstr) {
-    writeLog("SCF\n");
-  }
+    LOG_DEBUG("Executed SCF\n");
+    return;
 }
 
 
-// This is NOP instruction
-void NOP(cpu_t *cpu, uint8_t opcode) {
-  /* Do nothing */
+// NOP instruction.
+static void opc_NOP(cpu_t *cpu, uint8_t opcode) {
+    /* Does nothing */
 
-  if(logInstr) {
-    writeLog("NOP\n");
-  }
+    LOG_DEBUG("Executed NOP\n");
+    return;
 }
 
 
-// This is HALT instruction
-void HALT(cpu_t *cpu, uint8_t opcode) {
-  z80.halt = 1;
+// HALT instruction.
+static void opc_HALT(cpu_t *cpu, uint8_t opcode) {
+    cpu->halt = 1;
 
-  if(logInstr) {
-    writeLog("HALT\n");
-  }
+    LOG_DEBUG("Executed HALT\n");
+    return;
 }
 
 
-// This is DI instruction
-void DI(cpu_t *cpu, uint8_t opcode) {
-  z80.IFF1 = 0;
-  z80.IFF2 = 0;
+// DI instruction.
+static void opc_DI(cpu_t *cpu, uint8_t opcode) {
+    cpu->IFF1 = 0;
+    cpu->IFF2 = 0;
 
-  if(logInstr) {
-    writeLog("DI\n");
-  }
+    LOG_DEBUG("Executed DI\n");
+    return;
 }
 
 
-// This is EI instruction
-void EI(cpu_t *cpu, uint8_t opcode) {
-  z80.IFF1 = 1;
-  z80.IFF2 = 1;
+// EI instruction.
+static void opc_EI(cpu_t *cpu, uint8_t opcode) {
+    cpu->IFF1 = 1;
+    cpu->IFF2 = 1;
 
-  if(logInstr) {
-    writeLog("EI\n");
-  }
+    LOG_DEBUG("Executed EI\n");
+    return;
 }
 
 
-// This is ADD HL, ss instruction
-void ADDHLss(cpu_t *cpu, uint8_t opcode) {
-  u16 val1 = z80.HL;
-  u16 val2;
-  u8 src = ((opcode >> 4) & 0x03);
+// ADD HL,ss instruction.
+static void opc_ADDHLss(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = ((opcode >> 4) & 0x03);
+    cpu->HL = cpu->HL + opc_readReg16(cpu, src, REG16_DD);
 
-  switch(src) {
-    case 0x00:
-      val2 = z80.BC;
-      break;
-    case 0x01:
-      val2 = z80.DE;
-      break;
-    case 0x02:
-      val2 = z80.HL;
-      break;
-    case 0x03:
-      val2 = z80.SP;
-      break;
-    default:
-      die("[ERROR] Invalid ss in ADD HL, ss instruction.");
-  }
+    // TODO: half carry and carry.
+    RESET_FLAG_ADDSUB(cpu);
 
-  // TODO: half carry?
-  rstAddSub();
-  testCarry_16(z80.HL, val2, 0);
-
-  z80.HL = val1 + val2;
-  if(logInstr) {
-    writeLog("ADD HL, "); logReg16(src, 0); writeLog("\n");
-  }
+    LOG_DEBUG("Executed ADD HL,%s\n", opc_regName16(src, REG16_DD));
+    return;
 }
 
 
