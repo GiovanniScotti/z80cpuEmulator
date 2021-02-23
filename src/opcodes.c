@@ -11,7 +11,7 @@ typedef enum {
 
 
 /*
-  TODO: ADC, SUB, SBC. Start from ADD HL,ss.
+  TODO: Start from ADD HL,ss (16-bit Arith), RL m.
   TODO: Check 16-bit arithmetic instructions
   TODO: DAA is missing, pag. 173.
   TODO: Complete IN and OUT, pag. 298.
@@ -45,26 +45,6 @@ static bool opc_isNegative16(uint16_t val) {
 }
 
 
-// Tests the given 8-bit value and sets Z flag accordingly.
-static void opc_testZFlag8(cpu_t *cpu, uint8_t val) {
-    if (val == 0)
-        SET_FLAG_ZERO(cpu);
-    else
-        RESET_FLAG_ZERO(cpu);
-    return;
-}
-
-
-// Tests the given 16-bit value and sets Z flag accordingly.
-static void opc_testZFlag16(cpu_t *cpu, uint16_t val) {
-    if (val == 0)
-        SET_FLAG_ZERO(cpu);
-    else
-        RESET_FLAG_ZERO(cpu);
-    return;
-}
-
-
 // Tests the given 8-bit value and sets S flag accordingly.
 static void opc_testSFlag8(cpu_t *cpu, uint8_t val) {
     if (opc_isNegative8(val))
@@ -85,88 +65,69 @@ static void opc_testSFlag16(cpu_t *cpu, uint16_t val) {
 }
 
 
-// Tests if the given 8-bit operands generate an half carry and sets the cpu
-// status register accordingly. Note that an extra argument specifies
-// the operation on the two operands.
-static void opc_testHFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2, bool isSub) {
-    if (!isSub) {
-        // Half-carry for additions.
-        if (((op1 & 0xF) + (op2 & 0xF)) & 0x10)
-            SET_FLAG_HCARRY(cpu);
-        else
-            RESET_FLAG_HCARRY(cpu);
-    } else {
-        // Half-carry for subtractions.
-        if (((op1 & 0xF) - (op2 & 0xF)) < 0)
-            SET_FLAG_HCARRY(cpu);
-        else
-            RESET_FLAG_HCARRY(cpu);
-    }
+// Tests the given 8-bit value and sets Z flag accordingly.
+static void opc_testZFlag8(cpu_t *cpu, uint8_t val) {
+    if (val == 0)
+        SET_FLAG_ZERO(cpu);
+    else
+        RESET_FLAG_ZERO(cpu);
     return;
 }
 
 
-// Tests if the given 8-bit operands generate a carry and sets the cpu
-// status register accordingly.
-static void opc_testCFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2, bool isSub) {
-    uint16_t op1_ext = op1;
-    uint16_t op2_ext = op2;
+// Tests the given 16-bit value and sets Z flag accordingly.
+static void opc_testZFlag16(cpu_t *cpu, uint16_t val) {
+    if (val == 0)
+        SET_FLAG_ZERO(cpu);
+    else
+        RESET_FLAG_ZERO(cpu);
+    return;
+}
+
+
+// Tests if the given 8-bit operands generate an half carry and sets the cpu
+// status register (H flag) accordingly. Note that an extra argument specifies
+// the operation on the two operands.
+static void opc_testHFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
+    uint8_t res, bool isSub) {
+
+    uint8_t carryIns = res ^ op1 ^ op2;
+    uint8_t carryHalf = (carryIns >> 4) & 0x1;
 
     if (!isSub) {
-        // Carry for additions.
-        if (((op1_ext & 0xFF) + (op2_ext & 0xFF)) & 0x100)
-            SET_FLAG_CARRY(cpu);
-        else
-            RESET_FLAG_CARRY(cpu);
-    } else {
-        // Carry for subtractions.
-        if (((op1_ext & 0xFF) - (op2_ext & 0xFF)) < 0)
+        if (carryHalf)
             SET_FLAG_HCARRY(cpu);
         else
             RESET_FLAG_HCARRY(cpu);
+    } else {
+        if (carryHalf)
+            RESET_FLAG_HCARRY(cpu);
+        else
+            SET_FLAG_HCARRY(cpu);
     }
     return;
 }
 
 
 // Tests if the given 8-bit operands generate an overflow and sets the cpu
-// status register accordingly (P/V flag).
-static void opc_testVFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2, bool isSub) {
-    if (!isSub) {
-        // Addition overflow. Two operands with different signs never cause
-        // overflow. Similar signs and a result with different sign points
-        // out an overflow.
-        if (!(opc_isNegative8(op1) ^ opc_isNegative8(cpu))) {
-            // Same signs.
-            uint8_t res = op1 + op2;
-            if (opc_isNegative8(op1) ^ opc_isNegative8(res)) {
-                // Result has different sign.
-                SET_FLAG_PARITY(cpu);
-            } else
-                RESET_FLAG_PARITY(cpu);
-        } else
-            RESET_FLAG_PARITY(cpu);
-    } else {
-        // Subtraction overflow. Same signs never cause overflow.
-        // If the minuend and the result have different signs, an
-        // overflow occurred.
-        if (opc_isNegative8(op1) ^ opc_isNegative8(cpu)) {
-            // Different signs.
-            uint8_t res = op1 - op2;
-            if (opc_isNegative8(op1) ^ opc_isNegative8(res)) {
-                // Result has different sign w.r.t the minuend.
-                SET_FLAG_PARITY(cpu);
-            } else
-                RESET_FLAG_PARITY(cpu);
-        } else
-            RESET_FLAG_PARITY(cpu);
-    }
+// status register (P/V flag) accordingly.
+static void opc_testVFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
+    uint8_t c, uint8_t res) {
+
+    uint8_t carryOut = (op1 > 0xFF - op2 - c);
+    uint8_t carryIns = res ^ op1 ^ op2;
+    uint8_t overflow = (carryIns >> 7) ^ carryOut;
+
+    if (overflow)
+        SET_FLAG_PARITY(cpu);
+    else
+        RESET_FLAG_PARITY(cpu);
     return;
 }
 
 
 // Tests the given 8-bit operand parity and sets the cpu status register
-// accordingly (P/V flag).
+// (P/V flag) accordingly.
 static void opc_testPFlag8(cpu_t *cpu, uint8_t val) {
     uint32_t set_bits = 0;
     while (val > 0) {
@@ -182,6 +143,26 @@ static void opc_testPFlag8(cpu_t *cpu, uint8_t val) {
     return;
 }
 
+
+// Tests if the given 8-bit operands generate a carry and sets the cpu
+// status register (C flag) accordingly.
+static void opc_testCFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
+    uint8_t c, bool isSub) {
+
+    uint8_t carryOut = (op1 > 0xFF - op2 - c);
+    if (!isSub) {
+        if (carryOut)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
+    } else {
+        if (carryOut)
+            RESET_FLAG_CARRY(cpu);
+        else
+            SET_FLAG_CARRY(cpu);
+    }
+    return;
+}
 
 
 /*
@@ -489,86 +470,71 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, 0);
-        opc_testVFlag8(cpu, cpu->A, data, 0);
+        opc_testHFlag8(cpu, cpu->A, data, res, 0);
+        opc_testVFlag8(cpu, cpu->A, data, 0, res);
         RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, data, 0);
+        opc_testCFlag8(cpu, cpu->A, data, 0, 0);
 
         cpu->A = res;
         LOG_DEBUG("Executed ADD A,(IX+d) IX+d=0x%04X\n", addr);
     }
 
-  // This is ADC A, (IX+d) instruction
-  else if(follByte == 0x8E) {
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 carry = (z80.F & FLAG_CARRY);
-    u8 res = z80.A + value + carry;
+    // ADC A,(IX+d) instruction.
+    else if (next_opc == 0x8E) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t c = GET_FLAG_CARRY(cpu);
+        uint8_t res = cpu->A + data + c;
 
-    testZero_8(res);
-    testSign_8(res);
-    testHalfCarry_8(z80.A, value, carry);
-    rstAddSub();
-    testCarry_8(z80.A, value, carry);
-    testOverflow_8(z80.A, value, res);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data, res, 0);
+        opc_testVFlag8(cpu, cpu->A, data, c, res);
+        RESET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, data, c, 0);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "ADC A, (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed ADC A,(IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
-  // This is SUB A, (IX+d) instruction
-  else if(follByte == 0x96){
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 complVal = ~value + 1;
-    u8 res = z80.A + complVal;
+    // SUB A,(IX+d) instruction.
+    else if (next_opc == 0x96) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A - data;
 
-    testZero_8(res);
-    testSign_8(res);
-    setAddSub();
-    testOverflow_8(z80.A, complVal, res);
-    testHalfCarry_8(z80.A, complVal, 0);
-    testCarry_8(z80.A, complVal, 0);
-    invertHC();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
+        opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+        SET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "SUB A, (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed SUB A,(IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
-  // This is SBC A, (IX+d) instruction
-  else if(follByte == 0x9E){
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IX + extended_d);
-    u8 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
-    // a - b - c = a + ~b + 1 - c = a + ~b + !c
-    u8 res = z80.A + ~value + not_carry;
+    // SBC A,(IX+d) instruction.
+    else if (next_opc == 0x9E) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IX + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t c = GET_FLAG_CARRY(cpu);
+        uint8_t res = cpu->A - data - c;
 
-    testZero_8(res);
-    testSign_8(res);
-    setAddSub();
-    testOverflow_8(z80.A, ~value, res);
-    testHalfCarry_8(z80.A, ~value, not_carry);
-    testCarry_8(z80.A, ~value, not_carry);
-    invertHC();
+        // A - B - C = A + ~B + !C
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
+        opc_testVFlag8(cpu, cpu->A, ~data, ~c, res);
+        SET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, ~data, ~c, 1);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "SBC A, (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed SBC A,(IX+d) IX+d=0x%04X\n", addr);
     }
-  }
 
     // AND (IX+d) instruction.
     else if (next_opc == 0xA6) {
@@ -633,10 +599,10 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, 1);
-        opc_testVFlag8(cpu, cpu->A, data, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
+        opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
         SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, data, 1);
+        opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
         LOG_DEBUG("Executed CP (IX+d) IX+d=0x%04X\n", addr);
     }
@@ -651,7 +617,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, 1, 0);
+        opc_testHFlag8(cpu, data, 1, res, 0);
         RESET_FLAG_ADDSUB(cpu);
 
         if (data == 0x7F)
@@ -673,7 +639,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, 1, 1);
+        opc_testHFlag8(cpu, data, (~1 + 1), res, 1);
         SET_FLAG_ADDSUB(cpu);
 
         if (data == 0x80)
@@ -748,39 +714,32 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
     }
   }
 
-  else if(follByte == 0xCB) {
-    u8 d = fetch8();  // 3rd instruction byte
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 controlByte = fetch8(); // 4th instruction byte
+    else if (next_opc == 0xCB) {
+        int8_t d = (int8_t)opc_fetch8(cpu); // 3rd instruction byte.
+        uint16_t addr = cpu->IX + d;
+        uint8_t controlByte = opc_fetch8(cpu); // 4th instruction byte.
 
-    // This is RLC (IX+d) instruction
-    if(controlByte == 0x06) {
-      opTbl[0xDD].TStates = 23;
-      u8 value = readByte(z80.IX + extended_d);
-      u8 v_msb = (value & 0x80) >> 7;
+        // RLC (IX+d) instruction.
+        if (controlByte == 0x06) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t msb = (data & 0x80) >> 7;
+            uint8_t res = ((data << 1) | msb);
 
-      // Shift left by one
-      u8 res = ((value << 1) | v_msb);
+            if (msb)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
 
-      // Update carry flag with old msb
-      if(v_msb)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
 
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RLC (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
-      }
-    }
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RLC (IX+d) IX+d=0x%04X\n", addr);
+        }
 
     // This is BIT b, (IX+d) instruction
     else if((controlByte & 0xC7) == 0x46) {
@@ -1084,86 +1043,71 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, 0);
-        opc_testVFlag8(cpu, cpu->A, data, 0);
+        opc_testHFlag8(cpu, cpu->A, data, res, 0);
+        opc_testVFlag8(cpu, cpu->A, data, 0, res);
         RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, data, 0);
+        opc_testCFlag8(cpu, cpu->A, data, 0, 0);
 
         cpu->A = res;
         LOG_DEBUG("Executed ADD A,(IY+d) IY+d=0x%04X\n", addr);
     }
 
-  // This is ADC A, (IY+d) instruction
-  else if(follByte == 0x8E){
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 carry = (z80.F & FLAG_CARRY);
-    u8 res = z80.A + value;
+    // ADC A,(IY+d) instruction.
+    else if (next_opc == 0x8E){
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t c = GET_FLAG_CARRY(cpu);
+        uint8_t res = cpu->A + data + c;
 
-    testZero_8(res);
-    testSign_8(res);
-    testHalfCarry_8(z80.A, value, carry);
-    rstAddSub();
-    testCarry_8(z80.A, value, carry);
-    testOverflow_8(z80.A, value, res);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, data, res, 0);
+        opc_testVFlag8(cpu, cpu->A, data, c, res);
+        RESET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, data, c, 0);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "ADC A, (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed ADC A,(IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
-  // This is SUB A, (IY+d) instruction
-  else if(follByte == 0x96){
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 complVal = ~value + 1;
-    u8 res = z80.A + complVal;
+    // SUB A,(IY+d) instruction.
+    else if (next_opc == 0x96) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t res = cpu->A - data;
 
-    testZero_8(res);
-    testSign_8(res);
-    setAddSub();
-    testOverflow_8(z80.A, complVal, res);
-    testHalfCarry_8(z80.A, complVal, 0);
-    testCarry_8(z80.A, complVal, 0);
-    invertHC();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
+        opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+        SET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "SUB A, (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed SUB A,(IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
-  // This is SBC A, (IY+d) instruction
-  else if(follByte == 0x9E){
-    u8 d = fetch8();
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 value = readByte(z80.IY + extended_d);
-    u8 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
-    // a - b - c = a + ~b + 1 - c = a + ~b + !c
-    u8 res = z80.A + ~value + not_carry;
+    // SBC A,(IY+d) instruction.
+    else if (next_opc == 0x9E) {
+        int8_t d = (int8_t)opc_fetch8(cpu);
+        uint16_t addr = cpu->IY + d;
+        uint8_t data = cpu_read(cpu, addr);
+        uint8_t c = GET_FLAG_CARRY(cpu);
+        uint8_t res = cpu->A - data - c;
 
-    testZero_8(res);
-    testSign_8(res);
-    setAddSub();
-    testOverflow_8(z80.A, ~value, res);
-    testHalfCarry_8(z80.A, ~value, not_carry);
-    testCarry_8(z80.A, ~value, not_carry);
-    invertHC();
+        // A - B - C = A + ~B + !C
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
+        opc_testVFlag8(cpu, cpu->A, ~data, ~c, res);
+        SET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->A, ~data, ~c, 1);
 
-    z80.A = res;
-    if(logInstr) {
-      fprintf(fpLog, "SBC A, (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
+        cpu->A = res;
+        LOG_DEBUG("Executed SBC A,(IY+d) IY+d=0x%04X\n", addr);
     }
-  }
 
     // AND (IY+d) instruction.
     else if (next_opc == 0xA6) {
@@ -1228,10 +1172,10 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, 1);
-        opc_testVFlag8(cpu, cpu->A, data, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
+        opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
         SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, data, 1);
+        opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
         LOG_DEBUG("Executed CP (IY+d) IY+d=0x%04X\n", addr);
     }
@@ -1246,7 +1190,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, 1, 0);
+        opc_testHFlag8(cpu, data, 1, res, 0);
         RESET_FLAG_ADDSUB(cpu);
 
         if (data == 0x7F)
@@ -1268,7 +1212,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, 1, 1);
+        opc_testHFlag8(cpu, data, (~1 + 1), res, 1);
         SET_FLAG_ADDSUB(cpu);
 
         if (data == 0x80)
@@ -1343,39 +1287,32 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
     }
   }
 
-  else if(follByte == 0xCB) {
-    u8 d = fetch8();  // 3rd instruction byte
-    u16 extended_d = d;
-    if(isNegative(d))
-      extended_d |= 0xFF00;
-    u8 controlByte = fetch8(); // 4th instruction byte
+    else if (next_opc == 0xCB) {
+        int8_t d = (int8_t)opc_fetch8(cpu); // 3rd instruction byte.
+        uint16_t addr = cpu->IY + d;
+        uint8_t controlByte = opc_fetch8(cpu); // 4th instruction byte.
 
-    // This is RLC (IY+d) instruction
-    if(controlByte == 0x06) {
-      opTbl[0xFD].TStates = 23;
-      u8 value = readByte(z80.IY + extended_d);
-      u8 v_msb = (value & 0x80) >> 7;
+        // RLC (IY+d) instruction.
+        if (controlByte == 0x06) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t msb = (data & 0x80) >> 7;
+            uint8_t res = ((data << 1) | msb);
 
-      // Shift left by one
-      u8 res = ((value << 1) | v_msb);
+            if (msb)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
 
-      // Update carry flag with old msb
-      if(v_msb)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
 
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RLC (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
-      }
-    }
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RLC (IY+d) IY+d=0x%04X\n", addr);
+        }
 
     // This is BIT b, (IY+d) instruction
     else if((controlByte & 0xC7) == 0x46) {
@@ -1825,7 +1762,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data_HL, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), res, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1845,7 +1782,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data_HL, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), res, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1874,7 +1811,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data_HL, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), res, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1894,7 +1831,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data_HL, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), res, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1920,7 +1857,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, 0, cpu->A, 1);
+        opc_testHFlag8(cpu, 0, (~cpu->A + 1), res, 1);
         SET_FLAG_ADDSUB(cpu);
 
         if (data == 0x80)
@@ -2248,10 +2185,10 @@ static void opc_ADDAr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, 0);
-    opc_testVFlag8(cpu, cpu->A, data, 0);
+    opc_testHFlag8(cpu, cpu->A, data, res, 0);
+    opc_testVFlag8(cpu, cpu->A, data, 0, res);
     RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, data, 0);
+    opc_testCFlag8(cpu, cpu->A, data, 0, 0);
 
     cpu->A = res;
     LOG_DEBUG("Executed ADD A,%s\n", opc_regName8(src));
@@ -2259,25 +2196,22 @@ static void opc_ADDAr(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is SUB A, r instruction
-void SUBAr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 value = readReg(src);
-  u8 complVal = ~value + 1;
-  u8 res = z80.A + complVal;
+// SUB A,r instruction.
+static void opc_SUBAr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t res = cpu->A - data;
 
-  testZero_8(res);
-  testSign_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, complVal, res);
-  testHalfCarry_8(z80.A, complVal, 0);
-  testCarry_8(z80.A, complVal, 0);
-  invertHC();
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
+    opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
-  z80.A = res;
-  if(logInstr) {
-    writeLog("SUB A, "); logReg8(src); writeLog("\n");
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed SUB A,%s\n", opc_regName8(src));
+    return;
 }
 
 
@@ -2288,10 +2222,10 @@ static void opc_ADDAn(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, n, 0);
-    opc_testVFlag8(cpu, cpu->A, n, 0);
+    opc_testHFlag8(cpu, cpu->A, n, res, 0);
+    opc_testVFlag8(cpu, cpu->A, n, 0, res);
     RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, n, 0);
+    opc_testCFlag8(cpu, cpu->A, n, 0, 0);
 
     cpu->A = res;
     LOG_DEBUG("Executed ADD A,0x%02X\n", n);
@@ -2299,24 +2233,21 @@ static void opc_ADDAn(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is SUB A, n instruction
-void SUBAn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  u8 complVal = ~n + 1;
-  u8 res = z80.A + complVal;
+// SUB A,n instruction.
+static void opc_SUBAn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    uint8_t res = cpu->A - n;
 
-  testZero_8(res);
-  testSign_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, complVal, res);
-  testHalfCarry_8(z80.A, complVal, 0);
-  testCarry_8(z80.A, complVal, 0);
-  invertHC();
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, (~n + 1), res, 1);
+    opc_testVFlag8(cpu, cpu->A, (~n + 1), 0, res);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, (~n + 1), 0, 1);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "SUB A, %02X\n", n);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed SUB A,0x%02X\n", n);
+    return;
 }
 
 
@@ -2327,10 +2258,10 @@ static void opc_ADDAHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, 0);
-    opc_testVFlag8(cpu, cpu->A, data, 0);
+    opc_testHFlag8(cpu, cpu->A, data, res, 0);
+    opc_testVFlag8(cpu, cpu->A, data, 0, res);
     RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, data, 0);
+    opc_testCFlag8(cpu, cpu->A, data, 0, 0);
 
     cpu->A = res;
     LOG_DEBUG("Executed ADD A,(HL) HL=0x%04X\n", cpu->HL);
@@ -2338,24 +2269,21 @@ static void opc_ADDAHL(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is SUB A, (HL) instruction
-void SUBAHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 complVal = ~value + 1;
-  u8 res = z80.A + complVal;
+// SUB A,(HL) instruction.
+static void opc_SUBAHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t res = cpu->A - data;
 
-  testZero_8(res);
-  testSign_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, complVal, res);
-  testHalfCarry_8(z80.A, complVal, 0);
-  testCarry_8(z80.A, complVal, 0);
-  invertHC();
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
+    opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "SUB A, (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed SUB A,(HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
@@ -2368,10 +2296,10 @@ static void opc_ADCAr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    //opc_testHFlag8(cpu, cpu->A, n, c, 0);
-    //opc_testVFlag8(cpu, cpu->A, n, c, 0);
+    opc_testHFlag8(cpu, cpu->A, data, res, 0);
+    opc_testVFlag8(cpu, cpu->A, data, c, res);
     RESET_FLAG_ADDSUB(cpu);
-    //opc_testCFlag8(cpu, cpu->A, n);
+    opc_testCFlag8(cpu, cpu->A, data, c, 0);
 
     cpu->A = res;
     LOG_DEBUG("Executed ADC A,%s\n", opc_regName8(src));
@@ -2379,110 +2307,102 @@ static void opc_ADCAr(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is SBC A, r instruction
-void SBCAr(cpu_t *cpu, uint8_t opcode) {
-  u8 src = (opcode & 0x07);
-  u8 value = readReg(src);
-  u8 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
-  // a - b - c = a + ~b + 1 - c = a + ~b + !c
-  u8 res = z80.A + ~value + not_carry;
+// SBC A,r instruction.
+static void opc_SBCAr(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = (opcode & 0x07);
+    uint8_t data = opc_readReg(cpu, src);
+    uint8_t c = GET_FLAG_CARRY(cpu);
+    uint8_t res = cpu->A - data - c;
 
-  testZero_8(res);
-  testSign_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, ~value, res);
-  testHalfCarry_8(z80.A, ~value, not_carry);
-  testCarry_8(z80.A, ~value, not_carry);
-  invertHC();
+    // A - B - C = A + ~B + !C
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
+    opc_testVFlag8(cpu, cpu->A, ~data, ~c, res);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, ~data, ~c, 1);
 
-  z80.A = res;
-  if(logInstr) {
-    writeLog("SBC A, "); logReg8(src); writeLog("\n");
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed SBC A,%s\n", opc_regName8(src));
+    return;
 }
 
 
-// This is ADC A, n instruction
-void ADCAn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  u8 carry = (z80.F & FLAG_CARRY);
-  u8 res = z80.A + n + carry;
+// ADC A,n instruction.
+static void opc_ADCAn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    uint8_t c = GET_FLAG_CARRY(cpu);
+    uint8_t res = cpu->A + n + c;
 
-  testZero_8(res);
-  testSign_8(res);
-  testHalfCarry_8(z80.A, n, carry);
-  rstAddSub();
-  testCarry_8(z80.A, n, carry);
-  testOverflow_8(z80.A, n, res);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, n, res, 0);
+    opc_testVFlag8(cpu, cpu->A, n, c, res);
+    RESET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, n, c, 0);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "ADC A, %02X\n", n);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed ADC A,0x%02X\n", n);
+    return;
 }
 
 
-// This is SBC A, n instruction
-void SBCAn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  u8 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
-  // a - b - c = a + ~b + 1 - c = a + ~b + !c
-  u8 res = z80.A + ~n + not_carry;
+// SBC A, n instruction.
+static void opc_SBCAn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    uint8_t c = GET_FLAG_CARRY(cpu);
+    uint8_t res = cpu->A - n - c;
 
-  testZero_8(res);
-  testSign_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, ~n, res);
-  testHalfCarry_8(z80.A, ~n, not_carry);
-  testCarry_8(z80.A, ~n, not_carry);
-  invertHC();
+    // A - B - C = A + ~B + !C
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, ~n, res, 1);
+    opc_testVFlag8(cpu, cpu->A, ~n, ~c, res);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, ~n, ~c, 1);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "SBC A, %02X\n", n);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed SBC A,0x%02X\n", n);
+    return;
 }
 
 
-// This is ADC A, (HL) instruction
-void ADCAHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 carry = (z80.F & FLAG_CARRY);
-  u8 res = z80.A + value + carry;
+// ADC A,(HL) instruction.
+static void opc_ADCAHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t c = GET_FLAG_CARRY(cpu);
+    uint8_t res = cpu->A + data + c;
 
-  testZero_8(res);
-  testSign_8(res);
-  testHalfCarry_8(z80.A, value, carry);
-  rstAddSub();
-  testCarry_8(z80.A, value, carry);
-  testOverflow_8(z80.A, value, res);
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, data, res, 0);
+    opc_testVFlag8(cpu, cpu->A, data, c, res);
+    RESET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, data, c, 0);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "ADC A, (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed ADC A,(HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
-// This is SBC A, (HL) instruction
-void SBCAHL(cpu_t *cpu, uint8_t opcode) {
-  u8 value = readByte(z80.HL);
-  u8 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
-  // a - b - c = a + ~b + 1 - c = a + ~b + !c
-  u8 res = z80.A + ~value + not_carry;
+// SBC A,(HL) instruction.
+static void opc_SBCAHL(cpu_t *cpu, uint8_t opcode) {
+    uint8_t data = cpu_read(cpu, cpu->HL);
+    uint8_t c = GET_FLAG_CARRY(cpu);
+    uint8_t res = cpu->A - data - c;
 
-  testZero_8(res);
-  testSign_8(res);
-  setAddSub();
-  testOverflow_8(z80.A, ~value, res);
-  testHalfCarry_8(z80.A, ~value, not_carry);
-  testCarry_8(z80.A, ~value, not_carry);
-  invertHC();
+    // A - B - C = A + ~B + !C
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
+    opc_testVFlag8(cpu, cpu->A, ~data, ~c, res);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, cpu->A, ~data, ~c, 1);
 
-  z80.A = res;
-  if(logInstr) {
-    fprintf(fpLog, "SBC A, (HL)\t\tHL = %04X\n", z80.HL);
-  }
+    cpu->A = res;
+    LOG_DEBUG("Executed SBC A,(HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
@@ -2659,10 +2579,10 @@ static void opc_CPr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, 1);
-    opc_testVFlag8(cpu, cpu->A, data, 1);
+    opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
+    opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
     SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, data, 1);
+    opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
     LOG_DEBUG("Executed CP %s\n", opc_regName8(src));
     return;
@@ -2676,10 +2596,10 @@ static void opc_CPn(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, n, 1);
-    opc_testVFlag8(cpu, cpu->A, n, 1);
+    opc_testHFlag8(cpu, cpu->A, (~n + 1), res, 1);
+    opc_testVFlag8(cpu, cpu->A, (~n + 1), 0, res);
     SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, n, 1);
+    opc_testCFlag8(cpu, cpu->A, (~n + 1), 0, 1);
 
     LOG_DEBUG("Executed CP 0x%02X\n", n);
     return;
@@ -2693,10 +2613,10 @@ static void opc_CPHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, 1);
-    opc_testVFlag8(cpu, cpu->A, data, 1);
+    opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
+    opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
     SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, data, 1);
+    opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
     LOG_DEBUG("Executed CP (HL) HL=0x%04X\n", cpu->HL);
     return;
@@ -2711,7 +2631,7 @@ static void opc_INCr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, 1, 0);
+    opc_testHFlag8(cpu, data, 1, res, 0);
     RESET_FLAG_ADDSUB(cpu);
 
     if (data == 0x7F)
@@ -2732,7 +2652,7 @@ static void opc_INCHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, 1, 0);
+    opc_testHFlag8(cpu, data, 1, res, 0);
     RESET_FLAG_ADDSUB(cpu);
 
     if (data == 0x7F)
@@ -2754,7 +2674,7 @@ static void opc_DECr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, 1, 1);
+    opc_testHFlag8(cpu, data, (~1 + 1), res, 1);
     SET_FLAG_ADDSUB(cpu);
 
     if (data == 0x80)
@@ -2775,7 +2695,7 @@ static void opc_DECHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, 1, 1);
+    opc_testHFlag8(cpu, data, (~1 + 1), res, 1);
     SET_FLAG_ADDSUB(cpu);
 
     if (data == 0x80)
@@ -2959,147 +2879,129 @@ void DECss(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is RLCA instruction
-void RLCA(cpu_t *cpu, uint8_t opcode) {
-  u8 a_msb = (z80.A & 0x80) >> 7;
-  // Shift left by one
-  z80.A = ((z80.A << 1) | a_msb);
+// RLCA instruction.
+static void opc_RLCA(cpu_t *cpu, uint8_t opcode) {
+    uint8_t msb = (cpu->A >> 7) & 0x1;
+    cpu->A = ((cpu->A << 1) | msb);
 
-  // Update carry flag with old msb
-  if(a_msb)
-    z80.F |= FLAG_CARRY;
-  else
-    z80.F &= ~(FLAG_CARRY);
-
-  rstAddSub();
-  z80.F &= ~(FLAG_HCARRY);
-
-  if(logInstr) {
-    writeLog("RLCA\n");
-  }
-}
-
-
-// This is RLA instruction
-void RLA(cpu_t *cpu, uint8_t opcode) {
-  u8 oldCarry = (z80.F & FLAG_CARRY);
-
-  // Update carry flag with A msb
-  if(z80.A & 0x80)
-    z80.F |= FLAG_CARRY;
-  else
-    z80.F &= ~(FLAG_CARRY);
-
-  z80.A = ((z80.A << 1) | oldCarry);
-
-  rstAddSub();
-  z80.F &= ~(FLAG_HCARRY);
-
-  if(logInstr) {
-    writeLog("RLA\n");
-  }
-}
-
-
-// This is RRCA instruction
-void RRCA(cpu_t *cpu, uint8_t opcode) {
-  u8 a_lsb = (z80.A & 0x01);
-
-  // Copy A LSB to carry flag
-  if(a_lsb)
-    z80.F |= FLAG_CARRY;
-  else
-    z80.F &= ~(FLAG_CARRY);
-
-  z80.A = ((z80.A >> 1) | (a_lsb << 7));
-
-  rstAddSub();
-  z80.F &= ~(FLAG_HCARRY);
-
-  if(logInstr) {
-    writeLog("RRCA\n");
-  }
-}
-
-
-// This is RRA instruction
-void RRA(cpu_t *cpu, uint8_t opcode) {
-  u8 oldCarry = (z80.F & FLAG_CARRY);
-
-  // Copy bit 0 to carry bit
-  if(z80.A & 0x01)
-    z80.F |= FLAG_CARRY;
-  else
-    z80.F &= ~(FLAG_CARRY);
-
-  z80.A = ((z80.A >> 1) | (oldCarry << 7));
-
-  rstAddSub();
-  z80.F &= ~(FLAG_HCARRY);
-
-  if(logInstr) {
-    writeLog("RRA\n");
-  }
-}
-
-
-void RLC(cpu_t *cpu, uint8_t opcode) {
-  opTbl[0xCB].TStates = 8;
-  u8 follByte = fetch8();
-
-  // This is RLCr instruction
-  if((follByte >= 0x00 && follByte <= 0x07) && follByte != 0x06) {
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
-    u8 r_msb = (value & 0x80) >> 7;
-
-    // Shift left by one
-    u8 res = ((value << 1) | r_msb);
-
-    // Update carry flag with old msb
-    if(r_msb)
-      z80.F |= FLAG_CARRY;
+    if (msb)
+        SET_FLAG_CARRY(cpu);
     else
-      z80.F &= ~(FLAG_CARRY);
+        RESET_FLAG_CARRY(cpu);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+    RESET_FLAG_HCARRY(cpu);
+    RESET_FLAG_ADDSUB(cpu);
 
-    writeReg(res, src);
-    if(logInstr) {
-      writeLog("RLC "); logReg8(src); writeLog("\n");
-    }
-  }
+    LOG_DEBUG("Executed RLCA\n");
+    return;
+}
 
-  // This is RLC (HL) instruction
-  else if(follByte == 0x06) {
-    opTbl[0xCB].TStates = 15;
-    u8 value = readByte(z80.HL);
-    u8 r_msb = (value & 0x80) >> 7;
 
-    // Shift left by one
-    u8 res = ((value << 1) | r_msb);
+// RLA instruction.
+static void opc_RLA(cpu_t *cpu, uint8_t opcode) {
+    uint8_t c = GET_FLAG_CARRY(cpu);
 
-    // Update carry flag with old msb
-    if(r_msb)
-      z80.F |= FLAG_CARRY;
+    // MSB in carry flag.
+    if (cpu->A & 0x80)
+        SET_FLAG_CARRY(cpu);
     else
-      z80.F &= ~(FLAG_CARRY);
+        RESET_FLAG_CARRY(cpu);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+    cpu->A = ((cpu->A << 1) | c);
 
-    writeByte(res, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "RLC (HL)\t\tHL = %04X\n", z80.HL);
+    RESET_FLAG_HCARRY(cpu);
+    RESET_FLAG_ADDSUB(cpu);
+
+    LOG_DEBUG("Executed RLA\n");
+    return;
+}
+
+
+// RRCA instruction.
+static void opc_RRCA(cpu_t *cpu, uint8_t opcode) {
+    uint8_t lsb = (cpu->A & 0x1);
+    cpu->A = ((cpu->A >> 1) | (lsb << 7));
+
+    if (lsb)
+        SET_FLAG_CARRY(cpu);
+    else
+        RESET_FLAG_CARRY(cpu);
+
+    RESET_FLAG_HCARRY(cpu);
+    RESET_FLAG_ADDSUB(cpu);
+
+    LOG_DEBUG("Executed RRCA\n");
+    return;
+}
+
+
+// RRA instruction.
+static void opc_RRA(cpu_t *cpu, uint8_t opcode) {
+    uint8_t c = GET_FLAG_CARRY(cpu);
+
+    // LSB in carry flag.
+    if (cpu->A & 0x1)
+        SET_FLAG_CARRY(cpu);
+    else
+        RESET_FLAG_CARRY(cpu);
+
+    cpu->A = ((cpu->A >> 1) | (c << 7));
+
+    RESET_FLAG_HCARRY(cpu);
+    RESET_FLAG_ADDSUB(cpu);
+
+    LOG_DEBUG("Executed RRA\n");
+    return;
+}
+
+
+static void opc_RLC(cpu_t *cpu, uint8_t opcode) {
+    opc_tbl[0xCB].TStates = 8;
+    uint8_t next_opc = opc_fetch8(cpu);
+
+    // RLCr instruction.
+    if ((next_opc >= 0 && next_opc <= 7) && next_opc != 6) {
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
+        uint8_t msb = (data & 0x80) >> 7;
+        uint8_t res = ((data << 1) | msb);
+
+        if (msb)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
+
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
+
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed RLC %s\n", opc_regName8(src));
     }
-  }
+
+    // RLC (HL) instruction.
+    else if (next_opc == 0x06) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        uint8_t msb = (data & 0x80) >> 7;
+        uint8_t res = ((data << 1) | msb);
+
+        if (msb)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
+
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
+
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed RLC (HL) HL=0x%04X\n", cpu->HL);
+    }
 
   // This is BIT b, r instruction
   else if((follByte & 0xC0) == 0x40) {

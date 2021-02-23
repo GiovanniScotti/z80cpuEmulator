@@ -47,9 +47,9 @@
 #define INT_MODE_2      2
 
 // Chunk types.
-#define CHUNK_UNUSED     0
-#define CHUNK_READONLY   1
-#define CHUNK_READWRITE  2
+#define CHUNK_UNUSED    0
+#define CHUNK_READONLY  1
+#define CHUNK_READWRITE 2
 
 #define WHITIN(x, y, z) ((x >= y) && (x <= z))
 
