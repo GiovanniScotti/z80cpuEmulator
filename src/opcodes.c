@@ -11,7 +11,7 @@ typedef enum {
 
 
 /*
-  TODO: Start from ADD HL,ss (16-bit Arith), RL m.
+  TODO: Start from ADD HL,ss (16-bit Arith).
   TODO: Check 16-bit arithmetic instructions
   TODO: DAA is missing, pag. 173.
   TODO: Complete IN and OUT, pag. 298.
@@ -741,206 +741,196 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
             LOG_DEBUG("Executed RLC (IX+d) IX+d=0x%04X\n", addr);
         }
 
-    // This is BIT b, (IX+d) instruction
-    else if((controlByte & 0xC7) == 0x46) {
-      opTbl[0xDD].TStates = 20;
-      u8 bit = ((controlByte >> 3) & 0x07); // Bit to test
-      u8 value = readByte(z80.IX + extended_d);
+        // BIT b,(IX+d) instruction.
+        else if ((controlByte & 0xC7) == 0x46) {
+            opc_tbl[0xDD].TStates = 20;
+            uint8_t bit = ((controlByte >> 3) & 0x07);
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t res = ((data >> bit) & 0x1);
 
-      value = ((value >> bit) & 0x01);
+            opc_testZFlag8(cpu, res);
+            SET_FLAG_HCARRY(cpu);
+            RESET_FLAG_ADDSUB(cpu);
 
-      testZero_8(value);
-      z80.F |= FLAG_HCARRY;
-      rstAddSub();
+            LOG_DEBUG("Executed BIT %d,(IX+d) IX+d=0x%04X\n", bit, addr);
+        }
 
-      if(logInstr) {
-        fprintf(fpLog, "BIT %01d, (IX+d)\t\tIX+d = %04X\n", bit, z80.IX + extended_d);
-      }
+        // SET b,(IX+d) instruction.
+        else if ((controlByte & 0xC7) == 0xC6) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t bit = ((controlByte >> 3) & 0x07);
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t res = data | (1 << bit);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed SET %d,(IX+d) IX+d=0x%04X\n", bit, addr);
+        }
+
+        // RES b,(IX+d) instruction.
+        else if ((controlByte & 0xC7) == 0x86) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t bit = ((controlByte >> 3) & 0x07);
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t res = data & ~(1 << bit);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RES %d,(IX+d) IX+d=0x%04X\n", bit, addr);
+        }
+
+        // RL (IX+d) instruction.
+        else if (controlByte == 0x16) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t c = GET_FLAG_CARRY(cpu);
+
+            // MSB in carry flag.
+            if (data & 0x80)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = ((data << 1) | c);
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RL (IX+d) IX+d=0x%04X\n", addr);
+        }
+
+        // RRC (IX+d) instruction.
+        else if (controlByte == 0x0E) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t lsb = (data & 0x1);
+
+            // LSB in carry flag.
+            if (lsb)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = ((data >> 1) | (lsb << 7));
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RRC (IX+d) IX+d=0x%04X\n", addr);
+        }
+
+        // RR (IX+d) instruction.
+        else if (controlByte == 0x1E) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t c = GET_FLAG_CARRY(cpu);
+
+            // LSB in carry flag.
+            if (data & 0x1)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = ((data >> 1) | (c << 7));
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RR (IX+d) IX+d=0x%04X\n", addr);
+        }
+
+        // SLA (IX+d) instruction.
+        else if (controlByte == 0x26) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+
+            // MSB in carry bit
+            if (data & 0x80)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = (data << 1);
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed SLA (IX+d) IX+d=0x%04X\n", addr);
+        }
+
+        // SRA (IX+d) instruction.
+        else if (controlByte == 0x2E) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t msb = (data & 0x80);
+            uint8_t lsb = (data & 0x1);
+
+            // LSB in carry flag.
+            if (lsb)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = ((data >> 1) | msb);
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed SRA (IX+d) IX+d=0x%04X\n", addr);
+        }
+
+        // SRL (IX+d) instruction.
+        else if (controlByte == 0x3E) {
+            opc_tbl[0xDD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+
+            // LSB in carry flag.
+            if (data & 0x1)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = (data >> 1);
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed SRL (IX+d) IX+d=0x%04X\n", addr);
+        }
+
+        else {
+            LOG_FATAL("Invalid instruction in IX BIT, SET, RESET group or "
+                "in Rotate and Shift group.\n");
+            exit(1);
+        }
     }
 
-    // This is SET b, (IX+d) instruction
-    else if((controlByte & 0xC7) == 0xC6) {
-      opTbl[0xDD].TStates = 23;
-      u8 bit = ((controlByte >> 3) & 0x07); // Bit to test
-      u8 value = readByte(z80.IX + extended_d);
-
-      value |= (1 << bit);
-
-      writeByte(value, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "SET %01d, (IX+d)\t\tIX+d = %04X\n", bit, z80.IX + extended_d);
-      }
+    else {
+        LOG_FATAL("Invalid operation in 0xDD instruction group.\n");
+        exit(1);
     }
-
-    // This is RES b, (IX+d) instruction
-    else if((controlByte & 0xC7) == 0x86) {
-      opTbl[0xDD].TStates = 23;
-      u8 bit = ((controlByte >> 3) & 0x07); // Bit to test
-      u8 value = readByte(z80.IX + extended_d);
-
-      value &= ~(1 << bit);
-
-      writeByte(value, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RES %01d, (IX+d)\t\tIX+d = %04X\n", bit, z80.IX + extended_d);
-      }
-    }
-
-    // This is RL (IX+d) instruction
-    else if(controlByte == 0x16) {
-      opTbl[0xDD].TStates = 23;
-      u8 oldCarry = (z80.F & FLAG_CARRY);
-      u8 value = readByte(z80.IX + extended_d);
-
-      // Update carry flag with value msb
-      if(value & 0x80)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = ((value << 1) | oldCarry);
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RL (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
-      }
-    }
-
-    // This is RRC (IX+d) instruction
-    else if(controlByte == 0x0E) {
-      opTbl[0xDD].TStates = 23;
-      u8 value = readByte(z80.IX + extended_d);
-      u8 v_lsb = (value & 0x01);
-
-      // Copy r LSB to carry flag
-      if(v_lsb)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = ((value >> 1) | (v_lsb << 7));
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(value, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RRC (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
-      }
-    }
-
-    // This is RR (IX+d) instruction
-    else if(controlByte == 0x1E) {
-      opTbl[0xDD].TStates = 23;
-      u8 oldCarry = (z80.F & FLAG_CARRY);
-      u8 value = readByte(z80.IX + extended_d);
-
-      // Copy bit 0 to carry bit
-      if(value & 0x01)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = ((value >> 1) | (oldCarry << 7));
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RR (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
-      }
-    }
-
-    // This is SLA (IX+d) instruction
-    else if(controlByte == 0x26) {
-      opTbl[0xDD].TStates = 23;
-      u8 value = readByte(z80.IX + extended_d);
-
-      // Copy bit 7 to carry bit
-      if(value & 0x80)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = (value << 1); // Shift left by one
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "SLA (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
-      }
-    }
-
-    // This is SRA (IX+d) instruction
-    else if(controlByte == 0x2E) {
-      opTbl[0xDD].TStates = 23;
-      u8 value = readByte(z80.IX + extended_d);
-      u8 v_msb = (value & 0x80);
-
-      // Copy bit 0 to carry flag
-      if(value & 0x01)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = ((value >> 1) | v_msb); // Shift right by one
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "SRA (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
-      }
-    }
-
-    // This is SRL (IX+d) instruction
-    else if(controlByte == 0x3E) {
-      opTbl[0xDD].TStates = 23;
-      u8 value = readByte(z80.IX + extended_d);
-
-      // Copy bit 0 to carry bit
-      if(value & 0x01)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = (value >> 1); // Shift right by one
-
-      z80.F &= ~(FLAG_SIGN | FLAG_HCARRY);
-      testZero_8(res);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IX + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "SRL (IX+d)\t\tIX+d = %04X\n", z80.IX + extended_d);
-      }
-    }
-    else die("[ERROR] Invalid instruction in IX BIT, SET, RESET group or in Rotate and Shift group.");
-  }
-  else die("[ERROR] Invalid operation in 0xDD instruction group.");
 }
 
 
@@ -1314,206 +1304,196 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
             LOG_DEBUG("Executed RLC (IY+d) IY+d=0x%04X\n", addr);
         }
 
-    // This is BIT b, (IY+d) instruction
-    else if((controlByte & 0xC7) == 0x46) {
-      opTbl[0xFD].TStates = 20;
-      u8 bit = ((controlByte >> 3) & 0x07); // Bit to test
-      u8 value = readByte(z80.IY + extended_d);
+        // BIT b,(IY+d) instruction.
+        else if ((controlByte & 0xC7) == 0x46) {
+            opc_tbl[0xFD].TStates = 20;
+            uint8_t bit = ((controlByte >> 3) & 0x07);
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t res = ((data >> bit) & 0x1);
 
-      value = ((value >> bit) & 0x01);
+            opc_testZFlag8(cpu, res);
+            SET_FLAG_HCARRY(cpu);
+            RESET_FLAG_ADDSUB(cpu);
 
-      testZero_8(value);
-      z80.F |= FLAG_HCARRY;
-      rstAddSub();
+            LOG_DEBUG("Executed BIT %d,(IY+d) IY+d=0x%04X\n", bit, addr);
+        }
 
-      if(logInstr) {
-        fprintf(fpLog, "BIT %01d, (IY+d)\t\tIY+d = %04X\n", bit, z80.IY + extended_d);
-      }
+        // SET b,(IY+d) instruction.
+        else if ((controlByte & 0xC7) == 0xC6) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t bit = ((controlByte >> 3) & 0x07);
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t res = data | (1 << bit);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed SET %d,(IY+d) IY+d=0x%04X\n", bit, addr);
+        }
+
+        // RES b,(IY+d) instruction.
+        else if ((controlByte & 0xC7) == 0x86) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t bit = ((controlByte >> 3) & 0x07);
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t res = data & ~(1 << bit);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RES %d,(IY+d) IY+d=0x%04X\n", bit, addr);
+        }
+
+        // RL (IY+d) instruction.
+        else if (controlByte == 0x16) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t c = GET_FLAG_CARRY(cpu);
+
+            // MSB in carry flag.
+            if (data & 0x80)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = ((data << 1) | c);
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RL (IY+d) IY+d=0x%04X\n", addr);
+        }
+
+        // RRC (IY+d) instruction.
+        else if (controlByte == 0x0E) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t lsb = (data & 0x1);
+
+            // LSB in carry flag.
+            if (lsb)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = ((data >> 1) | (lsb << 7));
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RRC (IY+d) IY+d=0x%04X\n", addr);
+        }
+
+        // RR (IY+d) instruction.
+        else if (controlByte == 0x1E) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t c = GET_FLAG_CARRY(cpu);
+
+            // LSB in carry flag.
+            if (data & 0x1)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = ((data >> 1) | (c << 7));
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed RR (IY+d) IY+d=0x%04X\n", addr);
+        }
+
+        // SLA (IY+d) instruction.
+        else if (controlByte == 0x26) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+
+            // MSB in carry bit
+            if (data & 0x80)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = (data << 1);
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed SLA (IY+d) IY+d=0x%04X\n", addr);
+        }
+
+        // SRA (IY+d) instruction.
+        else if (controlByte == 0x2E) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+            uint8_t msb = (data & 0x80);
+            uint8_t lsb = (data & 0x1);
+
+            // LSB in carry flag.
+            if (lsb)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = ((data >> 1) | msb);
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed SRA (IY+d) IY+d=0x%04X\n", addr);
+        }
+
+        // SRL (IY+d) instruction.
+        else if (controlByte == 0x3E) {
+            opc_tbl[0xFD].TStates = 23;
+            uint8_t data = cpu_read(cpu, addr);
+
+            // LSB in carry flag.
+            if (data & 0x1)
+                SET_FLAG_CARRY(cpu);
+            else
+                RESET_FLAG_CARRY(cpu);
+
+            uint8_t res = (data >> 1);
+
+            opc_testSFlag8(cpu, res);
+            opc_testZFlag8(cpu, res);
+            RESET_FLAG_HCARRY(cpu);
+            opc_testPFlag8(cpu, res);
+            RESET_FLAG_ADDSUB(cpu);
+
+            cpu_write(cpu, res, addr);
+            LOG_DEBUG("Executed SRL (IY+d) IY+d=0x%04X\n", addr);
+        }
+
+        else {
+            LOG_FATAL("Invalid instruction in IY BIT, SET, RESET group or "
+                "in Rotate and Shift group.\n");
+            exit(1);
+        }
     }
 
-    // This is SET b, (IY+d) instruction
-    else if((controlByte & 0xC7) == 0xC6) {
-      opTbl[0xFD].TStates = 23;
-      u8 bit = ((controlByte >> 3) & 0x07); // Bit to test
-      u8 value = readByte(z80.IY + extended_d);
-
-      value |= (1 << bit);
-
-      writeByte(value, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "SET %01d, (IY+d)\t\tIY+d = %04X\n", bit, z80.IY + extended_d);
-      }
+    else {
+        LOG_FATAL("Invalid operation in 0xFD instruction group.\n");
+        exit(1);
     }
-
-    // This is RES b, (IY+d) instruction
-    else if((controlByte & 0xC7) == 0x86) {
-      opTbl[0xFD].TStates = 23;
-      u8 bit = ((controlByte >> 3) & 0x07); // Bit to test
-      u8 value = readByte(z80.IY + extended_d);
-
-      value &= ~(1 << bit);
-
-      writeByte(value, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RES %01d, (IY+d)\t\tIY+d = %04X\n", bit, z80.IY + extended_d);
-      }
-    }
-
-    // This is RL (IY+d) instruction
-    else if(controlByte == 0x16) {
-      opTbl[0xFD].TStates = 23;
-      u8 oldCarry = (z80.F & FLAG_CARRY);
-      u8 value = readByte(z80.IY + extended_d);
-
-      // Update carry flag with value msb
-      if(value & 0x80)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = ((value << 1) | oldCarry);
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RL (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
-      }
-    }
-
-    // This is RRC (IY+d) instruction
-    else if(controlByte == 0x0E) {
-      opTbl[0xFD].TStates = 23;
-      u8 value = readByte(z80.IY + extended_d);
-      u8 v_lsb = (value & 0x01);
-
-      // Copy r LSB to carry flag
-      if(v_lsb)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = ((value >> 1) | (v_lsb << 7));
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(value, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RRC (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
-      }
-    }
-
-    // This is RR (IY+d) instruction
-    else if(controlByte == 0x1E) {
-      opTbl[0xFD].TStates = 23;
-      u8 oldCarry = (z80.F & FLAG_CARRY);
-      u8 value = readByte(z80.IY + extended_d);
-
-      // Copy bit 0 to carry bit
-      if(value & 0x01)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = ((value >> 1) | (oldCarry << 7));
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "RR (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
-      }
-    }
-
-    // This is SLA (IY+d) instruction
-    else if(controlByte == 0x26) {
-      opTbl[0xFD].TStates = 23;
-      u8 value = readByte(z80.IY + extended_d);
-
-      // Copy bit 7 to carry bit
-      if(value & 0x80)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = (value << 1); // Shift left by one
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "SLA (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
-      }
-    }
-
-    // This is SRA (IY+d) instruction
-    else if(controlByte == 0x2E) {
-      opTbl[0xFD].TStates = 23;
-      u8 value = readByte(z80.IY + extended_d);
-      u8 v_msb = (value & 0x80);
-
-      // Copy bit 0 to carry flag
-      if(value & 0x01)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = ((value >> 1) | v_msb); // Shift right by one
-
-      testSign_8(res);
-      testZero_8(res);
-      z80.F &= ~(FLAG_HCARRY);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "SRA (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
-      }
-    }
-
-    // This is SRL (IY+d) instruction
-    else if(controlByte == 0x3E) {
-      opTbl[0xFD].TStates = 23;
-      u8 value = readByte(z80.IY + extended_d);
-
-      // Copy bit 0 to carry bit
-      if(value & 0x01)
-        z80.F |= FLAG_CARRY;
-      else
-        z80.F &= ~(FLAG_CARRY);
-
-      u8 res = (value >> 1); // Shift right by one
-
-      z80.F &= ~(FLAG_SIGN | FLAG_HCARRY);
-      testZero_8(res);
-      testParity_8(res);
-      rstAddSub();
-
-      writeByte(res, z80.IY + extended_d);
-      if(logInstr) {
-        fprintf(fpLog, "SRL (IY+d)\t\tIY+d = %04X\n", z80.IY + extended_d);
-      }
-    }
-    else die("[ERROR] Invalid instruction in IY BIT, SET, RESET group or in Rotate and Shift group.");
-  }
-  else die("[ERROR] Invalid operation in 0xFD instruction group.");
 }
 
 
@@ -1605,7 +1585,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
             RESET_FLAG_ZERO(cpu);
 
         RESET_FLAG_HCARRY(cpu);
-        RESET_FLAH_ADDSUB(cpu);
+        RESET_FLAG_ADDSUB(cpu);
 
         if (cpu->IFF2)
             SET_FLAG_PARITY(cpu);
@@ -1630,7 +1610,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
             RESET_FLAG_ZERO(cpu);
 
         RESET_FLAG_HCARRY(cpu);
-        RESET_FLAH_ADDSUB(cpu);
+        RESET_FLAG_ADDSUB(cpu);
 
         if (cpu->IFF2)
             SET_FLAG_PARITY(cpu);
@@ -1999,55 +1979,47 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     }
   }
 
-  // This is RLD instruction
-  else if(follByte == 0x6F) {
-    opTbl[0xED].TStates = 18;
-    u8 valueHL = readByte(z80.HL);
-    u8 valueHLhigh = (valueHL & 0xF0);
-    u8 valueHLlow = (valueHL & 0x0F);
-    u8 aLow = (z80.A & 0x0F);
+    // RLD instruction.
+    else if (next_opc == 0x6F) {
+        opc_tbl[0xED].TStates = 18;
+        uint8_t data_HL = cpu_read(cpu, cpu->HL);
+        uint8_t data_HLH = (data_HL >> 4) & 0xF;
+        uint8_t data_HLL = (data_HL & 0xF);
+        uint8_t data_AL = (cpu->A & 0xF);
 
-    z80.A &= 0xF0;
-    z80.A |= (valueHLhigh >> 4);
+        cpu->A = ((cpu->A & 0xF0) | data_HLH);
+        uint8_t res = ((data_HLL << 4) | data_AL);
 
-    valueHL = ((valueHLlow << 4) | aLow);
+        opc_testSFlag8(cpu, cpu->A);
+        opc_testZFlag8(cpu, cpu->A);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, cpu->A);
+        RESET_FLAG_ADDSUB(cpu);
 
-    testSign_8(z80.A);
-    testZero_8(z80.A);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(z80.A);
-    rstAddSub();
-
-    writeByte(valueHL, z80.HL);
-    if(logInstr) {
-      writeLog("RLD\n");
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed RLD\n");
     }
-  }
 
-  // This is RRD instruction
-  else if(follByte == 0x67) {
-    opTbl[0xED].TStates = 18;
-    u8 valueHL = readByte(z80.HL);
-    u8 valueHLhigh = (valueHL & 0xF0);
-    u8 valueHLlow = (valueHL & 0x0F);
-    u8 aLow = (z80.A & 0x0F);
+    // RRD instruction.
+    else if (next_opc == 0x67) {
+        opc_tbl[0xED].TStates = 18;
+        uint8_t data_HL = cpu_read(cpu, cpu->HL);
+        uint8_t data_HLH = (data_HL >> 4) & 0xF;
+        uint8_t data_HLL = (data_HL & 0xF);
+        uint8_t data_AL = (cpu->A & 0xF);
 
-    z80.A &= 0xF0;
-    z80.A |= (valueHLlow);
+        cpu->A = ((cpu->A & 0xF0) | data_HLL);
+        uint8_t res = ((data_AL << 4) | data_HLH);
 
-    valueHL = ((aLow << 4) | (valueHLhigh >> 4));
+        opc_testSFlag8(cpu, cpu->A);
+        opc_testZFlag8(cpu, cpu->A);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, cpu->A);
+        RESET_FLAG_ADDSUB(cpu);
 
-    testSign_8(z80.A);
-    testZero_8(z80.A);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(z80.A);
-    rstAddSub();
-
-    writeByte(valueHL, z80.HL);
-    if(logInstr) {
-      writeLog("RRD\n");
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed RRD\n");
     }
-  }
 
   // TODO
   // This is IN r, (C) instruction
@@ -3003,412 +2975,378 @@ static void opc_RLC(cpu_t *cpu, uint8_t opcode) {
         LOG_DEBUG("Executed RLC (HL) HL=0x%04X\n", cpu->HL);
     }
 
-  // This is BIT b, r instruction
-  else if((follByte & 0xC0) == 0x40) {
-    u8 bit = ((follByte >> 3) & 0x07); // Bit to test
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
+    // BIT b,r instruction.
+    else if ((next_opc & 0xC0) == 0x40) {
+        uint8_t bit = ((next_opc >> 3) & 0x07);
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
+        uint8_t res = ((data >> bit) & 0x1);
 
-    value = ((value >> bit) & 0x01);
+        opc_testZFlag8(cpu, res);
+        SET_FLAG_HCARRY(cpu);
+        RESET_FLAG_ADDSUB(cpu);
 
-    testZero_8(value);
-    z80.F |= FLAG_HCARRY;
-    rstAddSub();
-
-    if(logInstr) {
-      fprintf(fpLog, "BIT %01d, ", bit); logReg8(src); writeLog("\n");
+        LOG_DEBUG("Executed BIT %d,%s\n", bit, opc_regName8(src));
     }
-  }
 
-  // This is BIT b, (HL) instruction
-  else if((follByte & 0xC7) == 0x46) {
-    opTbl[0xCB].TStates = 12;
-    u8 bit = ((follByte >> 3) & 0x07); // Bit to test
-    u8 value = readByte(z80.HL);
+    // BIT b,(HL) instruction.
+    else if ((next_opc & 0xC7) == 0x46) {
+        opc_tbl[0xCB].TStates = 12;
+        uint8_t bit = ((next_opc >> 3) & 0x07);
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        uint8_t res = ((data >> bit) & 0x1);
 
-    value = ((value >> bit) & 0x01);
+        opc_testZFlag8(cpu, res);
+        SET_FLAG_HCARRY(cpu);
+        RESET_FLAG_ADDSUB(cpu);
 
-    testZero_8(value);
-    z80.F |= FLAG_HCARRY;
-    rstAddSub();
-
-    if(logInstr) {
-      fprintf(fpLog, "BIT %01d, (HL)\t\tHL = %04X\n", bit, z80.HL);
+        LOG_DEBUG("Executed BIT %d,(HL) HL=0x%04X\n", bit, cpu->HL);
     }
-  }
 
-  // This is SET b, r instruction
-  else if((follByte & 0xC0) == 0xC0) {
-    u8 bit = ((follByte >> 3) & 0x07); // Bit to test
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
+    // SET b,r instruction.
+    else if ((next_opc & 0xC0) == 0xC0) {
+        uint8_t bit = ((next_opc >> 3) & 0x07);
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
+        uint8_t res = data | (1 << bit);
 
-    value |= (1 << bit);
-
-    writeReg(value, src);
-    if(logInstr) {
-      fprintf(fpLog, "SET %01d, ", bit); logReg8(src); writeLog("\n");
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed SET %d,%s\n", bit, opc_regName8(src));
     }
-  }
 
-  // This is SET b, (HL) instruction
-  else if((follByte & 0xC7) == 0xC6) {
-    opTbl[0xCB].TStates = 15;
-    u8 bit = ((follByte >> 3) & 0x07); // Bit to test
-    u8 value = readByte(z80.HL);
+    // SET b,(HL) instruction.
+    else if ((next_opc & 0xC7) == 0xC6) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t bit = ((next_opc >> 3) & 0x07);
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        uint8_t res = data | (1 << bit);
 
-    value |= (1 << bit);
-
-    writeByte(value, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "SET %01d, (HL)\t\tHL = %04X\n", bit, z80.HL);
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed SET %d,(HL) HL=0x%04X\n", bit, cpu->HL);
     }
-  }
 
-  // This is RES b, r instruction
-  else if((follByte & 0xC0) == 0x80) {
-    u8 bit = ((follByte >> 3) & 0x07); // Bit to test
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
+    // RES b,r instruction.
+    else if ((next_opc & 0xC0) == 0x80) {
+        uint8_t bit = ((next_opc >> 3) & 0x07);
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
+        uint8_t res = data & ~(1 << bit);
 
-    value &= ~(1 << bit);
-
-    writeReg(value, src);
-    if(logInstr) {
-      fprintf(fpLog, "RES %01d, ", bit); logReg8(src); writeLog("\n");
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed RES %d,%s\n", bit, opc_regName8(src));
     }
-  }
 
-  // This is RES b, (HL) instruction
-  else if((follByte & 0xC7) == 0x86) {
-    opTbl[0xCB].TStates = 15;
-    u8 bit = ((follByte >> 3) & 0x07); // Bit to test
-    u8 value = readByte(z80.HL);
+    // RES b,(HL) instruction.
+    else if ((next_opc & 0xC7) == 0x86) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t bit = ((next_opc >> 3) & 0x07);
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        uint8_t res = data & ~(1 << bit);
 
-    value &= ~(1 << bit);
-
-    writeByte(value, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "RES %01d, (HL)\t\tHL = %04X\n", bit, z80.HL);
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed RES %d,(HL) HL=0x%04X\n", bit, cpu->HL);
     }
-  }
 
-  // This is RL r instruction
-  else if((follByte & 0xF8) == 0x10) {
-    u8 oldCarry = (z80.F & FLAG_CARRY);
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
+    // RL r instruction.
+    else if ((next_opc & 0xF8) == 0x10) {
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
+        uint8_t c = GET_FLAG_CARRY(cpu);
 
-    // Update carry flag with value msb
-    if(value & 0x80)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // MSB in carry flag.
+        if (data & 0x80)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = ((value << 1) | oldCarry);
+        uint8_t res = ((data << 1) | c);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeReg(res, src);
-    if(logInstr) {
-      writeLog("RL "); logReg8(src); writeLog("\n");
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed RL %s\n", opc_regName8(src));
     }
-  }
 
-  // This is RL (HL) instruction
-  else if(follByte == 0x16) {
-    opTbl[0xCB].TStates = 15;
-    u8 oldCarry = (z80.F & FLAG_CARRY);
-    u8 value = readByte(z80.HL);
+    // RL (HL) instruction.
+    else if (next_opc == 0x16) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        uint8_t c = GET_FLAG_CARRY(cpu);
 
-    // Update carry flag with value msb
-    if(value & 0x80)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // MSB in carry flag.
+        if (data & 0x80)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = ((value << 1) | oldCarry);
+        uint8_t res = ((data << 1) | c);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "RL (HL)\t\tHL = %04X\n", z80.HL);
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed RL (HL) HL=0x%04X\n", cpu->HL);
     }
-  }
 
-  // This is RRC r instruction
-  else if((follByte & 0xF8) == 0x08) {
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
-    u8 r_lsb = (value & 0x01);
+    // RRC r instruction.
+    else if ((next_opc & 0xF8) == 0x08) {
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
+        uint8_t lsb = (data & 0x1);
 
-    // Copy r LSB to carry flag
-    if(r_lsb)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // LSB in carry flag.
+        if (lsb)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = ((value >> 1) | (r_lsb << 7));
+        uint8_t res = ((data >> 1) | (lsb << 7));
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeReg(res, src);
-    if(logInstr) {
-      writeLog("RRC "); logReg8(src); writeLog("\n");
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed RRC %s\n", opc_regName8(src));
     }
-  }
 
-  // This is RRC (HL) instruction
-  else if(follByte == 0x0E) {
-    opTbl[0xCB].TStates = 15;
-    u8 value = readByte(z80.HL);
-    u8 v_lsb = (value & 0x01);
+    // RRC (HL) instruction.
+    else if (next_opc == 0x0E) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        uint8_t lsb = (data & 0x1);
 
-    // Copy r LSB to carry flag
-    if(v_lsb)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // LSB in carry flag.
+        if (lsb)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = ((value >> 1) | (v_lsb << 7));
+        uint8_t res = ((data >> 1) | (lsb << 7));
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "RRC (HL)\t\tHL = %04X\n", z80.HL);
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed RRC (HL) HL=0x%04X\n", cpu->HL);
     }
-  }
 
-  // This is RR r instruction
-  else if((follByte & 0xF8) == 0x18) {
-    u8 oldCarry = (z80.F & FLAG_CARRY);
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
+    // RR r instruction.
+    else if ((next_opc & 0xF8) == 0x18) {
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
+        uint8_t c = GET_FLAG_CARRY(cpu);
 
-    // Copy bit 0 to carry bit
-    if(value & 0x01)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // LSB in carry flag.
+        if (data & 0x1)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = ((value >> 1) | (oldCarry << 7));
+        uint8_t res = ((data >> 1) | (c << 7));
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeReg(res, src);
-    if(logInstr) {
-      writeLog("RR "); logReg8(src); writeLog("\n");
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed RR %s\n", opc_regName8(src));
     }
-  }
 
-  // This is RR (HL) instruction
-  else if(follByte == 0x1E) {
-    opTbl[0xCB].TStates = 15;
-    u8 oldCarry = (z80.F & FLAG_CARRY);
-    u8 value = readByte(z80.HL);
+    // RR (HL) instruction.
+    else if (next_opc == 0x1E) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        uint8_t c = GET_FLAG_CARRY(cpu);
 
-    // Copy bit 0 to carry bit
-    if(value & 0x01)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // LSB in carry flag.
+        if (data & 0x1)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = ((value >> 1) | (oldCarry << 7));
+        uint8_t res = ((data >> 1) | (c << 7));
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "RR (HL)\t\tHL = %04X\n", z80.HL);
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed RR (HL) HL=0x%04X\n", cpu->HL);
     }
-  }
 
-  // This is SLA r instruction
-  else if((follByte & 0xF8) == 0x20) {
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
+    // SLA r instruction.
+    else if ((next_opc & 0xF8) == 0x20) {
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
 
-    // Copy bit 7 to carry bit
-    if(value & 0x80)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // MSB in carry bit
+        if (data & 0x80)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = (value << 1); // Shift left by one
+        uint8_t res = (data << 1);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeReg(res, src);
-    if(logInstr) {
-      writeLog("SLA "); logReg8(src); writeLog("\n");
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed SLA %s\n", opc_regName8(src));
     }
-  }
 
-  // This is SLA (HL) instruction
-  else if(follByte == 0x26) {
-    opTbl[0xCB].TStates = 15;
-    u8 value = readByte(z80.HL);
+    // SLA (HL) instruction.
+    else if (next_opc == 0x26) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t data = cpu_read(cpu, cpu->HL);
 
-    // Copy bit 7 to carry bit
-    if(value & 0x80)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // MSB in carry bit
+        if (data & 0x80)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = (value << 1); // Shift left by one
+        uint8_t res = (data << 1);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "SLA (HL)\t\tHL = %04X\n", z80.HL);
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed SLA (HL) HL=0x%04X\n", cpu->HL);
     }
-  }
 
-  // This is SRA r instruction
-  else if((follByte & 0xF8) == 0x28) {
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
-    u8 v_msb = (value & 0x80);
+    // SRA r instruction.
+    else if ((next_opc & 0xF8) == 0x28) {
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
+        uint8_t msb = (data & 0x80);
+        uint8_t lsb = (data & 0x1);
 
-    // Copy bit 0 to carry flag
-    if(value & 0x01)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // LSB in carry flag.
+        if (lsb)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = ((value >> 1) | v_msb); // Shift right by one
+        uint8_t res = ((data >> 1) | msb);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeReg(res, src);
-    if(logInstr) {
-      writeLog("SRA "); logReg8(src); writeLog("\n");
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed SRA %s\n", opc_regName8(src));
     }
-  }
 
-  // This is SRA (HL) instruction
-  else if(follByte == 0x2E) {
-    opTbl[0xCB].TStates = 15;
-    u8 value = readByte(z80.HL);
-    u8 v_msb = (value & 0x80);
+    // SRA (HL) instruction.
+    else if (next_opc == 0x2E) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t data = cpu_read(cpu, cpu->HL);
+        uint8_t msb = (data & 0x80);
+        uint8_t lsb = (data & 0x1);
 
-    // Copy bit 0 to carry flag
-    if(value & 0x01)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // LSB in carry flag.
+        if (lsb)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = ((value >> 1) | v_msb); // Shift right by one
+        uint8_t res = ((data >> 1) | msb);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "SRA (HL)\t\tHL = %04X\n", z80.HL);
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed SRA (HL) HL=0x%04X\n", cpu->HL);
     }
-  }
 
-  // This is SRL r instruction
-  else if((follByte & 0xF8) == 0x38) {
-    u8 src = (follByte & 0x07);
-    u8 value = readReg(src);
+    // SRL r instruction.
+    else if ((next_opc & 0xF8) == 0x38) {
+        uint8_t src = (next_opc & 0x07);
+        uint8_t data = opc_readReg(cpu, src);
 
-    // Copy bit 0 to carry bit
-    if(value & 0x01)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // LSB in carry flag.
+        if (data & 0x1)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = (value >> 1); // Shift right by one
+        uint8_t res = (data >> 1);
 
-    z80.F &= ~(FLAG_SIGN | FLAG_HCARRY);
-    testZero_8(res);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeReg(res, src);
-    if(logInstr) {
-      writeLog("SRL "); logReg8(src); writeLog("\n");
+        opc_writeReg(cpu, src, res);
+        LOG_DEBUG("Executed SRL %s\n", opc_regName8(src));
     }
-  }
 
-  // This is SRL (HL) instruction
-  else if(follByte == 0x3E) {
-    opTbl[0xCB].TStates = 15;
-    u8 value = readByte(z80.HL);
+    // SRL (HL) instruction.
+    else if (next_opc == 0x3E) {
+        opc_tbl[0xCB].TStates = 15;
+        uint8_t data = cpu_read(cpu, cpu->HL);
 
-    // Copy bit 0 to carry bit
-    if(value & 0x01)
-      z80.F |= FLAG_CARRY;
-    else
-      z80.F &= ~(FLAG_CARRY);
+        // LSB in carry flag.
+        if (data & 0x1)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
 
-    u8 res = (value >> 1); // Shift right by one
+        uint8_t res = (data >> 1);
 
-    z80.F &= ~(FLAG_SIGN | FLAG_HCARRY);
-    testZero_8(res);
-    testParity_8(res);
-    rstAddSub();
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    writeByte(res, z80.HL);
-    if(logInstr) {
-      fprintf(fpLog, "SRL (HL)\t\tHL = %04X\n", z80.HL);
+        cpu_write(cpu, res, cpu->HL);
+        LOG_DEBUG("Executed SRL (HL) HL=0x%04X\n", cpu->HL);
     }
-  }
-  else die("[ERROR] Invalid RLC instruction.");
+
+    else {
+        LOG_FATAL("Invalid RLC instruction.\n");
+        exit(1);
+    }
 }
 
 
-// This is JP nn instruction
-void JPnn(cpu_t *cpu, uint8_t opcode) {
-  u16 offset = fetch16();
-  z80.PC = offset;
-  if(logInstr) {
-    fprintf(fpLog, "JP %04X\n", offset);
-  }
+// JP nn instruction.
+static void opc_JPnn(cpu_t *cpu, uint8_t opcode) {
+    uint16_t addr = opc_fetch16(cpu);
+    cpu->PC = addr;
+
+    LOG_DEBUG("Executed JP 0x%04X\n", addr);
+    return;
 }
 
 
