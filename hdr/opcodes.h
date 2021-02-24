@@ -11,36 +11,11 @@ typedef struct {
 } opc_t;
 
 
+extern opc_t opc_tbl[0x100];
+
+
 uint8_t opc_fetch8(cpu_t *cpu);
 uint16_t opc_fetch16(cpu_t *cpu);
-
-// Status register support functions
-//int  isNegative(u8 val);
-//void rstAddSub();
-//void setAddSub();
-//
-//void testZero_8(u8 val);
-//void testZero_16(u16 val);
-//
-//void testSign_8(u8 val);
-//void testSign_16(u16 val);
-//
-//void testHalfCarry_8(u8 val1, u8 val2, u8 carry);
-//
-//void testCarry_8(u8 val1, u8 val2, u8 carry);
-//void testCarry_16(u16 val1, u16 val2, u16 carry);
-//
-//void testOverflow_8(u8 val1, u8 val2, u8 res);
-//void testOverflow_16(u16 val1, u16 val2, u16 res);
-//
-//void testParity_8(u8 val);
-//void invertHC();
-//
-//// Register access functions
-//void writeReg(u8 value, u8 index);
-//u8   readReg(u8 index);
-//void logReg8(u8 index);
-//void logReg16(u8 index, int af_flag);
 
 // Z80 instruction set architecture.
 // void opc_LDrn(cpu_t *cpu, uint8_t opcode);

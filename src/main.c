@@ -1,3 +1,4 @@
+#include <ncurses.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -7,6 +8,7 @@
 #include "logger.h"
 #include "hex2array.h"
 #include "cpu.h"
+#include "mc6850.h"
 
 ///////////////////////////////////////////////////////////
 // Z80 CPU Emulator VERSION.
@@ -18,10 +20,9 @@
 
 // Exit handler in case SIGINT is received.
 static void exitHandler(int sigNumber) {
-    //printMemory(z80.ram, 0xFFFF);
-    //dumpRegisters();
+    // TODO: print memory content? Dump registers?
     logger_close();
-    //endwin();         // Gracefully close ncurses windows
+    endwin();         // Gracefully close ncurses windows
     exit(1);
 }
 
@@ -98,11 +99,11 @@ int main(int argc, char **argv) {
     } while(next_option != -1);
 
 
-    //initscr();              // Initialize terminal
-    //cbreak();               // Set per-character buffer
-    //noecho();               // Do not echo characters
-    //nodelay(stdscr, TRUE);  // No delay for getch function
-    //scrollok(stdscr, TRUE); // Set auto scrolling
+    initscr();              // Initialize terminal
+    cbreak();               // Set per-character buffer
+    noecho();               // Do not echo characters
+    nodelay(stdscr, TRUE);  // No delay for getch function
+    scrollok(stdscr, TRUE); // Set auto scrolling
 
 
     // Initializes the logger and the verbosity level.
@@ -146,46 +147,25 @@ int main(int argc, char **argv) {
     mem_chunk_t rom = {"ROM", CHUNK_READONLY, 0, 0x8000, rom_buff, &ram};
     cpu_t z80;
 
+    // CPU initialization.
     if (cpu_init(&z80, &rom)) {
         LOG_FATAL("Cannot initialize the cpu.\n");
         cpu_destroy(&z80);
         exit(1);
     }
 
-    cpu_emulate(&z80, 5);
+    // Hooks up the ACIA.
+    mc6850_init();
+    z80.portIO_in = mc6850_cpuOut;
+    z80.portIO_out = mc6850_cpuIn;
 
-/*
-    // Hook up the ACIA
-    init6850();
-    z80.portIn = mc6850_toZ80;
-    z80.portOut = mc6850_fromZ80;
+    // Emulation.
+    cpu_emulate(&z80, -1);
 
-    printw("\n");
-    writeLog("\n");
-
-    // ######### START HEX PROGRAM EXECUTION #########
-    logInstr = 0;
-    emulateZ80(-1);  // -1 for endless execution
-    logInstr = 1;
-
-    // ***** DUMP MEMORY AND REGISTERS *****
-    printMemory(z80.ram, 0xFFFF);
-    dumpRegisters();
-
-    // Exit sequence after program termination
-    char exitChar = 0x00;
-    printw("\n\nPress Y to exit\n");
-    refresh();
-
-    while (exitChar != 'y' && exitChar != 'Y') {
-        if (kbhit())
-        exitChar = getch();
-    }
-*/
-
+    // Termination.
     cpu_destroy(&z80);
     logger_close();
-    //endwin();
+    endwin();
 
     return 0;
 }

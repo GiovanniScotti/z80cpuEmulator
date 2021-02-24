@@ -1,15 +1,7 @@
-#ifndef MC6850_H
-#define MC6850_H
+#ifndef _MC6850_H_
+#define _MC6850_H_
 
-#include <ncurses.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include "logger.h"
-#include "memory.h"
-#include "Z80.h"
+#include <stdint.h>
 
 #define RX_FULL   (1 << 0)
 #define TX_EMPTY  (1 << 1)
@@ -21,21 +13,27 @@
   0x80: R/W control/status registers
   0x81: R/W TX/RX data registers
 
-  Transmitting interrupt is disabled. Receive interrupt is enabled.
+  Transmitting interrupt is disabled. Reception interrupt is enabled.
 */
 
-struct {
-  u8 TDR; // Transmit Data Register
-  u8 RDR; // Receive Data Register
-  // Status Registers
-  u8 status;
-} m6850;
+typedef struct {
+    uint8_t TDR; // Transmit Data Register.
+    uint8_t RDR; // Receive Data Register.
+    // Status Registers.
+    uint8_t status;
+} mc6850_t;
 
 
-int  kbhit();
-void init6850();
-u8   mc6850_toZ80(int port);
-void mc6850_fromZ80(int port, u8 value);
-void m6850Status();
+int32_t mc6850_init(void);
+uint8_t mc6850_getStatus(void);
+void mc6850_setStatus(uint8_t data);
+uint8_t mc6850_getTDR(void);
+void mc6850_setRDR(uint8_t data);
 
-#endif
+uint8_t mc6850_cpuOut(uint8_t port);
+void mc6850_cpuIn(uint8_t port, uint8_t data);
+
+void mc6850_dumpStatus(void);
+int32_t kbhit(void);
+
+#endif // _MC6850_H_

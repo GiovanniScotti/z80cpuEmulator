@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "opcodes.h"
 #include "logger.h"
 
@@ -6,16 +8,17 @@
 
 typedef enum {
     REG16_QQ = 0,
-    REG16_DD = 1
+    REG16_DD = 1,
+    REG16_PP = 2,
+    REG16_RR = 3
 } reg16_t;
 
 
 /*
-  TODO: Start from ADD HL,ss (16-bit Arith).
-  TODO: Check 16-bit arithmetic instructions
   TODO: DAA is missing, pag. 173.
   TODO: Complete IN and OUT, pag. 298.
 */
+
 
 // Returns one byte from the current PC.
 uint8_t opc_fetch8(cpu_t *cpu) {
@@ -30,7 +33,7 @@ uint16_t opc_fetch16(cpu_t *cpu) {
 
 
 ///////////////////////////////////////////////////////////
-// SUPPORT FUNCTIONS
+// STATUS REGISTER SUPPORT FUNCTIONS
 ///////////////////////////////////////////////////////////
 
 // Tests if the given byte is negative.
@@ -87,12 +90,44 @@ static void opc_testZFlag16(cpu_t *cpu, uint16_t val) {
 
 // Tests if the given 8-bit operands generate an half carry and sets the cpu
 // status register (H flag) accordingly. Note that an extra argument specifies
-// the operation on the two operands.
+// the operation on the two operands. If operands are A and B:
+// - simple addition: op1 = A, op2 = B, isSub = false.
+// - simple subtraction: op1 = A, op2 = ~B + 1, isSub = true.
+// - addition w/carry: op1 = A, op2 = B, isSub = false.
+// - subtraction w/carry: op1 = A, op2 = ~B, isSub = true.
 static void opc_testHFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
     uint8_t res, bool isSub) {
 
     uint8_t carryIns = res ^ op1 ^ op2;
     uint8_t carryHalf = (carryIns >> 4) & 0x1;
+
+    if (!isSub) {
+        if (carryHalf)
+            SET_FLAG_HCARRY(cpu);
+        else
+            RESET_FLAG_HCARRY(cpu);
+    } else {
+        if (carryHalf)
+            RESET_FLAG_HCARRY(cpu);
+        else
+            SET_FLAG_HCARRY(cpu);
+    }
+    return;
+}
+
+
+// Tests if the given 16-bit operands generate an half carry and sets the cpu
+// status register (H flag) accordingly. Note that an extra argument specifies
+// the operation on the two operands. If operands are A and B:
+// - simple addition: op1 = A, op2 = B, isSub = false.
+// - simple subtraction: op1 = A, op2 = ~B + 1, isSub = true.
+// - addition w/carry: op1 = A, op2 = B, isSub = false.
+// - subtraction w/carry: op1 = A, op2 = ~B, isSub = true.
+static void opc_testHFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2,
+    uint16_t res, bool isSub) {
+
+    uint16_t carryIns = res ^ op1 ^ op2;
+    uint16_t carryHalf = (carryIns >> 12) & 0x1;
 
     if (!isSub) {
         if (carryHalf)
@@ -126,6 +161,23 @@ static void opc_testVFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
 }
 
 
+// Tests if the given 16-bit operands generate an overflow and sets the cpu
+// status register (P/V flag) accordingly.
+static void opc_testVFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2,
+    uint8_t c, uint16_t res) {
+
+    uint16_t carryOut = (op1 > 0xFFFF - op2 - c);
+    uint16_t carryIns = res ^ op1 ^ op2;
+    uint16_t overflow = (carryIns >> 15) ^ carryOut;
+
+    if (overflow)
+        SET_FLAG_PARITY(cpu);
+    else
+        RESET_FLAG_PARITY(cpu);
+    return;
+}
+
+
 // Tests the given 8-bit operand parity and sets the cpu status register
 // (P/V flag) accordingly.
 static void opc_testPFlag8(cpu_t *cpu, uint8_t val) {
@@ -145,7 +197,11 @@ static void opc_testPFlag8(cpu_t *cpu, uint8_t val) {
 
 
 // Tests if the given 8-bit operands generate a carry and sets the cpu
-// status register (C flag) accordingly.
+// status register (C flag) accordingly. If operands are A and B:
+// - simple addition: op1 = A, op2 = B, c = 0, isSub = false.
+// - simple subtraction: op1 = A, op2 = ~B + 1, c = 0, isSub = true.
+// - addition w/carry: op1 = A, op2 = B, c = carry, isSub = false.
+// - subtraction w/carry: op1 = A, op2 = ~B, c = !carry, isSub = true.
 static void opc_testCFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
     uint8_t c, bool isSub) {
 
@@ -165,40 +221,33 @@ static void opc_testCFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
 }
 
 
-/*
-void testCarry_16(u16 val1, u16 val2, u16 carry) {
-  // Avoid overflow in C and test carry condition
-  if(val1 > 0xFFFF - val2 - carry) z80.F |= FLAG_CARRY;
-  else                             z80.F &= ~(FLAG_CARRY);
-}
+// Tests if the given 16-bit operands generate a carry and sets the cpu
+// status register (C flag) accordingly. If operands are A and B:
+// - simple addition: op1 = A, op2 = B, c = 0, isSub = false.
+// - simple subtraction: op1 = A, op2 = ~B + 1, c = 0, isSub = true.
+// - addition w/carry: op1 = A, op2 = B, c = carry, isSub = false.
+// - subtraction w/carry: op1 = A, op2 = ~B, c = !carry, isSub = true.
+static void opc_testCFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2,
+    uint8_t c, bool isSub) {
 
-
-void testOverflow_16(u16 val1, u16 val2, u16 res) {
-  if(((val1 ^ val2) ^ 0x8000) & 0x8000) {
-    if((res ^ val1) & 0x8000) {
-      z80.F |= FLAG_PARITY;
+    uint16_t carryOut = (op1 > 0xFFFF - op2 - c);
+    if (!isSub) {
+        if (carryOut)
+            SET_FLAG_CARRY(cpu);
+        else
+            RESET_FLAG_CARRY(cpu);
+    } else {
+        if (carryOut)
+            RESET_FLAG_CARRY(cpu);
+        else
+            SET_FLAG_CARRY(cpu);
     }
-    else {
-      z80.F &= ~(FLAG_PARITY);
-    }
-  } else {
-    z80.F &= ~(FLAG_PARITY);
-  }
+    return;
 }
-
-
-// Used in SUB instructions
-void invertHC() {
-  u8 mask = (FLAG_CARRY | FLAG_HCARRY);
-  z80.F ^= mask;
-}
-
-*/
-
 
 
 ///////////////////////////////////////////////////////////
-// REGISTER ACCESS FUNCTIONS
+// REGISTER ACCESS FUNCTIONS AND HELPERS
 ///////////////////////////////////////////////////////////
 
 // Writes data into a register.
@@ -259,10 +308,15 @@ static void opc_writeReg16(cpu_t *cpu, uint8_t reg, uint16_t value, reg16_t type
         case 0x01:
             cpu->DE = value; break;
         case 0x02:
-            cpu->HL = value; break;
+            if (type == REG16_DD) {cpu->HL = value; break;}
+            if (type == REG16_QQ) {cpu->HL = value; break;}
+            if (type == REG16_PP) {cpu->IX = value; break;}
+            if (type == REG16_RR) {cpu->IY = value; break;}
         case 0x03:
             if (type == REG16_DD) {cpu->SP = value; break;}
             if (type == REG16_QQ) {cpu->AF = value; break;}
+            if (type == REG16_PP) {cpu->SP = value; break;}
+            if (type == REG16_RR) {cpu->SP = value; break;}
         default:
             LOG_FATAL("Cannot write to unknown register (0x%02X).\n", reg);
             exit(1);
@@ -279,10 +333,15 @@ static uint16_t opc_readReg16(cpu_t *cpu, uint8_t reg, reg16_t type) {
         case 0x01:
             return cpu->DE;
         case 0x02:
-            return cpu->HL;
+            if (type == REG16_DD) return cpu->HL;
+            if (type == REG16_QQ) return cpu->HL;
+            if (type == REG16_PP) return cpu->IX;
+            if (type == REG16_RR) return cpu->IY;
         case 0x03:
             if (type == REG16_DD) return cpu->SP;
             if (type == REG16_QQ) return cpu->AF;
+            if (type == REG16_PP) return cpu->SP;
+            if (type == REG16_RR) return cpu->SP;
         default:
             LOG_FATAL("Cannot read unknown register (0x%02X).\n", reg);
             exit(1);
@@ -324,10 +383,15 @@ static char * opc_regName16(uint8_t reg, reg16_t type) {
         case 0x01:
             return "DE";
         case 0x02:
-            return "HL";
+            if (type == REG16_DD) return "HL";
+            if (type == REG16_QQ) return "HL";
+            if (type == REG16_PP) return "IX";
+            if (type == REG16_RR) return "IY";
         case 0x03:
             if (type == REG16_DD) return "SP";
             if (type == REG16_QQ) return "AF";
+            if (type == REG16_PP) return "SP";
+            if (type == REG16_RR) return "SP";
         default:
             LOG_FATAL("Unknown register (0x%02X).\n", reg);
             exit(1);
@@ -651,68 +715,44 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         LOG_DEBUG("Executed DEC (IX+d) IX+d=0x%04X\n", addr);
     }
 
-  // This is ADD IX, pp instruction
-  else if((follByte & 0xCF) == 0x09) {
-    opTbl[0xDD].TStates = 15;
-    u16 val1 = z80.IX;
-    u16 val2;
-    u8 src = ((follByte >> 4) & 0x03);
+    // ADD IX,pp instruction.
+    else if ((next_opc & 0xCF) == 0x09) {
+        opc_tbl[0xDD].TStates = 15;
+        uint8_t src = ((next_opc >> 4) & 0x03);
+        uint16_t data = opc_readReg16(cpu, src, REG16_PP);
+        uint16_t res = cpu->IX + data;
 
-    switch(src) {
-      case 0x00:
-        val2 = z80.BC;
-        break;
-      case 0x01:
-        val2 = z80.DE;
-        break;
-      case 0x02:
-        val2 = z80.IX;
-        break;
-      case 0x03:
-        val2 = z80.SP;
-        break;
-      default:
-        die("[ERROR] Invalid pp in ADD IX, pp instruction.");
+        opc_testHFlag16(cpu, cpu->IX, data, res, 0);
+        RESET_FLAG_ADDSUB(cpu);
+        opc_testCFlag16(cpu, cpu->IX, data, 0, 0);
+
+        cpu->IX = res;
+        LOG_DEBUG("Executed ADD IX,%s\n", opc_regName16(src, REG16_PP));
     }
 
-    u16 res = val1 + val2;
+    // INC IX instruction.
+    else if (next_opc == 0x23) {
+        opc_tbl[0xDD].TStates = 10;
+        cpu->IX++;
 
-    // TODO: half carry?
-    rstAddSub();
-    testCarry_16(val1, val2, 0);
-
-    z80.IX = res;
-    if(logInstr) {
-      writeLog("ADD IX, "); logReg16(src, 0); writeLog("\n");
+        LOG_DEBUG("Executed INC IX\n");
     }
-  }
 
-  // This is INC IX instruction
-  else if(follByte == 0x23) {
-    opTbl[0xDD].TStates = 10;
-    z80.IX++;
-    if(logInstr) {
-      writeLog("INC IX\n");
-    }
-  }
+    // DEC IX instruction.
+    else if (next_opc == 0x2B) {
+        opc_tbl[0xDD].TStates = 10;
+        cpu->IX--;
 
-  // This is DEC IX instruction
-  else if(follByte == 0x2B) {
-    opTbl[0xDD].TStates = 10;
-    z80.IX--;
-    if(logInstr) {
-      writeLog("DEC IX\n");
+        LOG_DEBUG("Executed DEC IX\n");
     }
-  }
 
-  // This is JP (IX) instruction
-  else if(follByte == 0xE9) {
-    opTbl[0xDD].TStates = 8;
-    z80.PC = z80.IX;
-    if(logInstr) {
-      fprintf(fpLog, "JP (IX)\t\tIX = %04X\n", z80.IX);
+    // JP (IX) instruction.
+    else if (next_opc == 0xE9) {
+        opc_tbl[0xDD].TStates = 8;
+        cpu->PC = cpu->IX;
+
+        LOG_DEBUG("Executed JP (IX) IX=0x%04X\n", cpu->IX);
     }
-  }
 
     else if (next_opc == 0xCB) {
         int8_t d = (int8_t)opc_fetch8(cpu); // 3rd instruction byte.
@@ -1214,68 +1254,44 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         LOG_DEBUG("Executed DEC (IY+d) IY+d=0x%04X\n", addr);
     }
 
-  // This is ADD IY, rr instruction
-  else if((follByte & 0xCF) == 0x09) {
-    opTbl[0xFD].TStates = 15;
-    u16 val1 = z80.IY;
-    u16 val2;
-    u8 src = ((follByte >> 4) & 0x03);
+    // ADD IY,rr instruction.
+    else if ((next_opc & 0xCF) == 0x09) {
+        opc_tbl[0xFD].TStates = 15;
+        uint8_t src = ((next_opc >> 4) & 0x03);
+        uint16_t data = opc_readReg16(cpu, src, REG16_RR);
+        uint16_t res = cpu->IY + data;
 
-    switch(src) {
-      case 0x00:
-        val2 = z80.BC;
-        break;
-      case 0x01:
-        val2 = z80.DE;
-        break;
-      case 0x02:
-        val2 = z80.IY;
-        break;
-      case 0x03:
-        val2 = z80.SP;
-        break;
-      default:
-        die("[ERROR] Invalid rr in ADD IY, rr instruction.");
+        opc_testHFlag16(cpu, cpu->IY, data, res, 0);
+        RESET_FLAG_ADDSUB(cpu);
+        opc_testCFlag16(cpu, cpu->IY, data, 0, 0);
+
+        cpu->IY = res;
+        LOG_DEBUG("Executed ADD IY,%s\n", opc_regName16(src, REG16_RR));
     }
 
-    u16 res = val1 + val2;
+    // INC IY instruction.
+    else if (next_opc == 0x23) {
+        opc_tbl[0xFD].TStates = 10;
+        cpu->IY++;
 
-    // TODO: half carry?
-    rstAddSub();
-    testCarry_16(val1, val2, 0);
-
-    z80.IY = res;
-    if(logInstr) {
-      writeLog("ADD IY, "); logReg16(src, 0); writeLog("\n");
+        LOG_DEBUG("Executed INC IY\n");
     }
-  }
 
-  // This is INC IY instruction
-  else if(follByte == 0x23) {
-    opTbl[0xFD].TStates = 10;
-    z80.IY++;
-    if(logInstr) {
-      writeLog("INC IY\n");
-    }
-  }
+    // DEC IY instruction.
+    else if (next_opc == 0x2B) {
+        opc_tbl[0xFD].TStates = 10;
+        cpu->IY--;
 
-  // This is DEC IY instruction
-  else if(follByte == 0x2B) {
-    opTbl[0xFD].TStates = 10;
-    z80.IY--;
-    if(logInstr) {
-      writeLog("DEC IY\n");
+        LOG_DEBUG("Executed DEC IY\n");
     }
-  }
 
-  // This is JP (IY) instruction
-  else if(follByte == 0xE9) {
-    opTbl[0xFD].TStates = 8;
-    z80.PC = z80.IY;
-    if(logInstr) {
-      fprintf(fpLog, "JP (IY)\t\tIY = %04X\n", z80.IY);
+    // JP (IY) instruction.
+    else if (next_opc == 0xE9) {
+        opc_tbl[0xFD].TStates = 8;
+        cpu->PC = cpu->IY;
+
+        LOG_DEBUG("Executed JP (IY) IY=0x%04X\n", cpu->IY);
     }
-  }
 
     else if (next_opc == 0xCB) {
         int8_t d = (int8_t)opc_fetch8(cpu); // 3rd instruction byte.
@@ -1693,7 +1709,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     }
 
     // LDD instruction.
-    else if(follByte == 0xA8) {
+    else if (next_opc == 0xA8) {
         opc_tbl[0xED].TStates = 16;
         uint8_t data = cpu_read(cpu, cpu->HL);
         cpu_write(cpu, data, cpu->DE);
@@ -1840,7 +1856,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
         opc_testHFlag8(cpu, 0, (~cpu->A + 1), res, 1);
         SET_FLAG_ADDSUB(cpu);
 
-        if (data == 0x80)
+        if (cpu->A == 0x80)
             SET_FLAG_PARITY(cpu);
         else
             RESET_FLAG_PARITY(cpu);
@@ -1878,106 +1894,61 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
         LOG_DEBUG("Executed IM 2\n");
     }
 
-  // This is ADC HL, ss instruction
-  else if((follByte & 0xCF) == 0x4A) {
-    opTbl[0xED].TStates = 15;
-    u16 val1 = z80.HL;
-    u16 val2;
-    u8 src = ((follByte >> 4) & 0x03);
+    // ADC HL,ss instruction.
+    else if ((next_opc & 0xCF) == 0x4A) {
+        opc_tbl[0xED].TStates = 15;
+        uint8_t src = ((next_opc >> 4) & 0x03);
+        uint16_t data = opc_readReg16(cpu, src, REG16_DD);
+        uint8_t c = GET_FLAG_CARRY(cpu);
+        uint16_t res = cpu->HL + data + c;
 
-    switch(src) {
-      case 0x00:
-        val2 = z80.BC;
-        break;
-      case 0x01:
-        val2 = z80.DE;
-        break;
-      case 0x02:
-        val2 = z80.HL;
-        break;
-      case 0x03:
-        val2 = z80.SP;
-        break;
-      default:
-        die("[ERROR] Invalid ss in ADC HL, ss instruction.");
+        opc_testSFlag16(cpu, res);
+        opc_testZFlag16(cpu, res);
+        opc_testHFlag16(cpu, cpu->HL, data, res, 0);
+        opc_testVFlag16(cpu, cpu->HL, data, c, res);
+        RESET_FLAG_ADDSUB(cpu);
+        opc_testCFlag16(cpu, cpu->HL, data, c, 0);
+
+        cpu->HL = res;
+        LOG_DEBUG("Executed ADC HL,%s\n", opc_regName16(src, REG16_DD));
     }
 
-    u16 carry = (z80.F & FLAG_CARRY);
-    u16 res = val1 + val2 + carry;
+    // SBC HL,ss instruction.
+    else if ((next_opc & 0xCF) == 0x42) {
+        opc_tbl[0xED].TStates = 15;
+        uint8_t src = ((next_opc >> 4) & 0x03);
+        uint16_t data = opc_readReg16(cpu, src, REG16_DD);
+        uint8_t c = GET_FLAG_CARRY(cpu);
+        uint16_t res = cpu->HL - data - c;
 
-    testSign_16(res);
-    testZero_16(res);
-    // TODO: half carry?
-    testOverflow_16(val1, val2, res);
-    rstAddSub();
-    testCarry_16(val1, val2, carry);
+        // A - B - C = A + ~B + !C
+        opc_testSFlag16(cpu, res);
+        opc_testZFlag16(cpu, res);
+        opc_testHFlag16(cpu, cpu->HL, ~data, res, 1);
+        opc_testVFlag8(cpu, cpu->HL, ~data, ~c, res);
+        SET_FLAG_ADDSUB(cpu);
+        opc_testCFlag8(cpu, cpu->HL, ~data, ~c, 1);
 
-    z80.HL = res;
-    if(logInstr) {
-      writeLog("ADC HL, "); logReg16(src, 0); writeLog("\n");
-    }
-  }
-
-  // This is SBC HL, ss instruction
-  else if((follByte & 0xCF) == 0x42) {
-    opTbl[0xED].TStates = 15;
-    u16 val1 = z80.HL;
-    u16 val2;
-    u8 src = ((follByte >> 4) & 0x03);
-
-    switch(src) {
-      case 0x00:
-        val2 = z80.BC;
-        break;
-      case 0x01:
-        val2 = z80.DE;
-        break;
-      case 0x02:
-        val2 = z80.HL;
-        break;
-      case 0x03:
-        val2 = z80.SP;
-        break;
-      default:
-        die("[ERROR] Invalid ss in SBC HL, ss instruction.");
+        cpu->HL = res;
+        LOG_DEBUG("Executed SBC HL,%s\n", opc_regName16(src, REG16_DD));
     }
 
-    u16 not_carry = (z80.F & FLAG_CARRY) ^ FLAG_CARRY;
-    // a - b - c = a + ~b + 1 - c = a + ~b + !c
-    u16 res = val1 + ~val2 + not_carry;
+    // RETI instruction.
+    else if (next_opc == 0x4D) {
+        opc_tbl[0xED].TStates = 14;
+        cpu->PC = cpu_stackPop(cpu);
 
-    testSign_16(res);
-    testZero_16(res);
-    // TODO: half carry?
-    testOverflow_16(val1, ~val2, res);
-    setAddSub();
-    testCarry_16(val1, ~val2, not_carry);
-    invertHC();
-
-    z80.HL = res;
-    if(logInstr) {
-      writeLog("SBC HL, "); logReg16(src, 0); writeLog("\n");
+        LOG_DEBUG("Executed RETI\n");
     }
-  }
 
-  // This is RETI instruction
-  else if(follByte == 0x4D) {
-    opTbl[0xED].TStates = 14;
-    z80.PC = stackPop();
-    if(logInstr) {
-      writeLog("RETI\n");
-    }
-  }
+    // RETN instruction.
+    else if (next_opc == 0x45) {
+        opc_tbl[0xED].TStates = 14;
+        cpu->IFF1 = cpu->IFF2;
+        cpu->PC = cpu_stackPop(cpu);
 
-  // This is RETN instruction
-  else if(follByte == 0x45) {
-    opTbl[0xED].TStates = 14;
-    z80.IFF1 = z80.IFF2;
-    z80.PC = stackPop();
-    if(logInstr) {
-      writeLog("RETN\n");
+        LOG_DEBUG("Executed RETN\n");
     }
-  }
 
     // RLD instruction.
     else if (next_opc == 0x6F) {
@@ -2021,36 +1992,35 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
         LOG_DEBUG("Executed RRD\n");
     }
 
-  // TODO
-  // This is IN r, (C) instruction
-  else if((follByte & 0xC7) == 0x40) {
-    opTbl[0xED].TStates = 12;
-    u8 dst = ((follByte >> 3) & 0x07);
-    writeReg(dst, z80.portIn(z80.C));
+    // IN r,(C) instruction.
+    else if ((next_opc & 0xC7) == 0x40) {
+        opc_tbl[0xED].TStates = 12;
+        uint8_t dst = ((next_opc >> 3) & 0x07);
+        uint8_t res = cpu->portIO_in(cpu->C);
+        opc_writeReg(cpu, dst, res);
 
-    u8 res = readReg(dst);
+        opc_testSFlag8(cpu, res);
+        opc_testZFlag8(cpu, res);
+        RESET_FLAG_HCARRY(cpu);
+        opc_testPFlag8(cpu, res);
+        RESET_FLAG_ADDSUB(cpu);
 
-    testSign_8(res);
-    testZero_8(res);
-    z80.F &= ~(FLAG_HCARRY);
-    testParity_8(res);
-    rstAddSub();
-
-    if(logInstr) {
-      writeLog("IN "); logReg8(dst); writeLog(", (C)\n");
+        LOG_DEBUG("Executed IN %s,(C)\n", opc_regName8(dst));
     }
-  }
 
-  // This is OUT (C), r instruction
-  else if((follByte & 0xC7) == 0x41) {
-    opTbl[0xED].TStates = 12;
-    u8 src = ((follByte >> 3) & 0x07);
-    z80.portOut(z80.C, readReg(src));
-    if(logInstr) {
-      writeLog("OUT (C), "); logReg8(src); writeLog("\n");
+    // OUT (C),r instruction.
+    else if ((next_opc & 0xC7) == 0x41) {
+        opc_tbl[0xED].TStates = 12;
+        uint8_t src = ((next_opc >> 3) & 0x07);
+        cpu->portIO_out(cpu->C, opc_readReg(cpu, src));
+
+        LOG_DEBUG("Executed OUT (C),%s\n", opc_regName8(src));
     }
-  }
-  else die("[ERROR] Invalid operation in 0xED instruction group.");
+
+    else {
+        LOG_FATAL("Invalid operation in 0xED instruction group.\n");
+        exit(1);
+    }
 }
 
 
@@ -2787,67 +2757,42 @@ static void opc_EI(cpu_t *cpu, uint8_t opcode) {
 // ADD HL,ss instruction.
 static void opc_ADDHLss(cpu_t *cpu, uint8_t opcode) {
     uint8_t src = ((opcode >> 4) & 0x03);
-    cpu->HL = cpu->HL + opc_readReg16(cpu, src, REG16_DD);
+    uint16_t data = opc_readReg16(cpu, src, REG16_DD);
+    uint16_t res = cpu->HL + data;
 
-    // TODO: half carry and carry.
+    opc_testHFlag16(cpu, cpu->HL, data, res, 0);
     RESET_FLAG_ADDSUB(cpu);
+    opc_testCFlag16(cpu, cpu->HL, data, 0, 0);
 
+    cpu->HL = res;
     LOG_DEBUG("Executed ADD HL,%s\n", opc_regName16(src, REG16_DD));
     return;
 }
 
 
-// This is INC ss instruction
-void INCss(cpu_t *cpu, uint8_t opcode) {
-  u8 src = ((opcode >> 4) & 0x03);
+// INC ss instruction.
+static void opc_INCss(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = ((opcode >> 4) & 0x03);
+    uint16_t data = opc_readReg16(cpu, src, REG16_DD);
+    uint16_t res = data + 1;
 
-  switch(src) {
-    case 0x00:
-      z80.BC++;
-      break;
-    case 0x01:
-      z80.DE++;
-      break;
-    case 0x02:
-      z80.HL++;
-      break;
-    case 0x03:
-      z80.SP++;
-      break;
-    default:
-      die("[ERROR] Invalid ss in INC ss instruction.");
-  }
+    opc_writeReg16(cpu, src, res, REG16_DD);
 
-  if(logInstr) {
-    writeLog("INC "); logReg16(src, 0); writeLog("\n");
-  }
+    LOG_DEBUG("Executed INC %s\n", opc_regName16(src, REG16_DD));
+    return;
 }
 
 
-// This is DEC ss instruction
-void DECss(cpu_t *cpu, uint8_t opcode) {
-  u8 src = ((opcode >> 4) & 0x03);
+// DEC ss instruction.
+static void opc_DECss(cpu_t *cpu, uint8_t opcode) {
+    uint8_t src = ((opcode >> 4) & 0x03);
+    uint16_t data = opc_readReg16(cpu, src, REG16_DD);
+    uint16_t res = data - 1;
 
-  switch(src) {
-    case 0x00:
-      z80.BC--;
-      break;
-    case 0x01:
-      z80.DE--;
-      break;
-    case 0x02:
-      z80.HL--;
-      break;
-    case 0x03:
-      z80.SP--;
-      break;
-    default:
-      die("[ERROR] Invalid ss in DEC ss instruction.");
-  }
+    opc_writeReg16(cpu, src, res, REG16_DD);
 
-  if(logInstr) {
-    writeLog("DEC "); logReg16(src, 0); writeLog("\n");
-  }
+    LOG_DEBUG("Executed DEC %s\n", opc_regName16(src, REG16_DD));
+    return;
 }
 
 
@@ -3350,467 +3295,403 @@ static void opc_JPnn(cpu_t *cpu, uint8_t opcode) {
 }
 
 
-// This is JP cc, nn instruction
-void JPccnn(cpu_t *cpu, uint8_t opcode) {
-  u16 offset = fetch16();
-  u8 cc = ((opcode >> 3) & 0x07);
+// JP cc,nn instruction.
+static void opc_JPccnn(cpu_t *cpu, uint8_t opcode) {
+    uint16_t addr = opc_fetch16(cpu);
+    uint8_t cc = ((opcode >> 3) & 0x07);
 
-  switch(cc) {
-    case 0x00: // NZ non-zero
-      if(!(z80.F & FLAG_ZERO))
-        z80.PC = offset;
-      if(logInstr)
-        fprintf(fpLog, "JP NZ, %04X\n", offset);
-      break;
-    case 0x01: // Z zero
-      if(z80.F & FLAG_ZERO)
-        z80.PC = offset;
-      if(logInstr)
-        fprintf(fpLog, "JP Z, %04X\n", offset);
-      break;
-    case 0x02: // NC no carry
-      if(!(z80.F & FLAG_CARRY))
-        z80.PC = offset;
-      if(logInstr)
-        fprintf(fpLog, "JP NC, %04X\n", offset);
-      break;
-    case 0x03: // C carry
-      if(z80.F & FLAG_CARRY)
-        z80.PC = offset;
-      if(logInstr)
-        fprintf(fpLog, "JP C, %04X\n", offset);
-      break;
-    case 0x04: // P/V parity odd (P/V reset)
-      if(!(z80.F & FLAG_PARITY))
-        z80.PC = offset;
-      if(logInstr)
-        fprintf(fpLog, "JP PO, %04X\n", offset);
-      break;
-    case 0x05: // P/V parity even (P/V set)
-      if(z80.F & FLAG_PARITY)
-        z80.PC = offset;
-      if(logInstr)
-        fprintf(fpLog, "JP PE, %04X\n", offset);
-      break;
-    case 0x06: // S sign positive (S reset)
-      if(!(z80.F & FLAG_SIGN))
-        z80.PC = offset;
-      if(logInstr)
-        fprintf(fpLog, "JP P, %04X\n", offset);
-      break;
-    case 0x07: // S sign negative (S set)
-      if(z80.F & FLAG_SIGN)
-        z80.PC = offset;
-      if(logInstr)
-        fprintf(fpLog, "JP M, %04X\n", offset);
-      break;
-    default:
-      die("[ERROR] Invalid 'cc' in JP cc, nn instruction.");
-  }
+    switch(cc) {
+        case 0x00: // NZ, non-zero.
+            if (!GET_FLAG_ZERO(cpu))
+                cpu->PC = addr;
+            LOG_DEBUG("Executed JP NZ,0x%04X\n", addr);
+            break;
+        case 0x01: // Z zero.
+            if (GET_FLAG_ZERO(cpu))
+                cpu->PC = addr;
+            LOG_DEBUG("Executed JP Z,0x%04X\n", addr);
+            break;
+        case 0x02: // NC, no carry.
+            if (!GET_FLAG_CARRY(cpu))
+                cpu->PC = addr;
+            LOG_DEBUG("Executed JP NC,0x%04X\n", addr);
+            break;
+        case 0x03: // C carry.
+            if (GET_FLAG_CARRY(cpu))
+                cpu->PC = addr;
+            LOG_DEBUG("Executed JP C,0x%04X\n", addr);
+            break;
+        case 0x04: // P/V parity odd (P/V reset).
+            if (!GET_FLAG_PARITY(cpu))
+                cpu->PC = addr;
+            LOG_DEBUG("Executed JP PO,0x%04X\n", addr);
+            break;
+        case 0x05: // P/V parity even (P/V set).
+            if (GET_FLAG_PARITY(cpu))
+                cpu->PC = addr;
+            LOG_DEBUG("Executed JP PE,0x%04X\n", addr);
+            break;
+        case 0x06: // S sign positive (S reset).
+            if (!GET_FLAG_SIGN(cpu))
+                cpu->PC = addr;
+            LOG_DEBUG("Executed JP P,0x%04X\n", addr);
+            break;
+        case 0x07: // S sign negative (S set).
+            if (GET_FLAG_SIGN(cpu))
+                cpu->PC = addr;
+            LOG_DEBUG("JP M,0x%04X\n", addr);
+            break;
+        default:
+            LOG_FATAL("Invalid 'cc' in JP cc,nn instruction.\n");
+            exit(1);
+    }
+    return;
 }
 
 
-// This is JR e instruction
-void JRe(cpu_t *cpu, uint8_t opcode) {
-  u8 offset = fetch8();
-  u16 extended_o = offset;
-  if(isNegative(offset))
-    extended_o |= 0xFF00;
+// JR e instruction.
+static void opc_JRe(cpu_t *cpu, uint8_t opcode) {
+    int8_t e = opc_fetch8(cpu);
+    cpu->PC += e;
 
-  z80.PC += extended_o;
-  if(logInstr) {
-    fprintf(fpLog, "JR %02X\n", offset);
-  }
+    LOG_DEBUG("Executed JR 0x%02X\n", e);
+    return;
 }
 
 
-// This is JR C, e instruction
-void JRCe(cpu_t *cpu, uint8_t opcode) {
-  opTbl[0x38].TStates = 12;  // Condition is met
-  u8 offset = fetch8();
-  u16 extended_o = offset;
-  if(isNegative(offset))
-    extended_o |= 0xFF00;
+// JR C,e instruction.
+static void opc_JRCe(cpu_t *cpu, uint8_t opcode) {
+    opc_tbl[0x38].TStates = 12;  // Condition is met.
+    int8_t e = opc_fetch8(cpu);
 
-  if(z80.F & FLAG_CARRY)
-    z80.PC += extended_o;
-  else opTbl[0x38].TStates = 7;  // Condition is not met
+    if (GET_FLAG_CARRY(cpu))
+        cpu->PC += e;
+    else
+        opc_tbl[0x38].TStates = 7;  // Condition is not met.
 
-  if(logInstr) {
-    fprintf(fpLog, "JR C, %02X\n", offset);
-  }
+    LOG_DEBUG("Executed JR C,0x%02X\n", e);
+    return;
 }
 
 
-// This is JR NC, e instruction
-void JRNCe(cpu_t *cpu, uint8_t opcode) {
-  opTbl[0x30].TStates = 12;  // Condition is met
-  u8 offset = fetch8();
-  u16 extended_o = offset;
-  if(isNegative(offset))
-    extended_o |= 0xFF00;
+// JR NC, e instruction.
+static void opc_JRNCe(cpu_t *cpu, uint8_t opcode) {
+    opc_tbl[0x30].TStates = 12;  // Condition is met.
+    int8_t e = opc_fetch8(cpu);
 
-  if(!(z80.F & FLAG_CARRY))
-    z80.PC += extended_o;
-  else opTbl[0x30].TStates = 7;  // Condition is not met
+    if (!GET_FLAG_CARRY(cpu))
+        cpu->PC += e;
+    else
+        opc_tbl[0x30].TStates = 7;  // Condition is not met.
 
-  if(logInstr) {
-    fprintf(fpLog, "JR NC, %02X\n", offset);
-  }
+    LOG_DEBUG("Executed JR NC,0x%02X\n", e);
+    return;
 }
 
 
-// This is JR Z, e instruction
-void JRZe(cpu_t *cpu, uint8_t opcode) {
-  opTbl[0x28].TStates = 12;  // Condition is met
-  u8 offset = fetch8();
-  u16 extended_o = offset;
-  if(isNegative(offset))
-    extended_o |= 0xFF00;
+// JR Z,e instruction.
+static void opc_JRZe(cpu_t *cpu, uint8_t opcode) {
+    opc_tbl[0x28].TStates = 12;  // Condition is met.
+    int8_t e = opc_fetch8(cpu);
 
-  if(z80.F & FLAG_ZERO)
-    z80.PC += extended_o;
-  else opTbl[0x28].TStates = 7;  // Condition is not met
+    if (GET_FLAG_ZERO(cpu))
+        cpu->PC += e;
+    else
+        opc_tbl[0x28].TStates = 7;  // Condition is not met.
 
-  if(logInstr) {
-    fprintf(fpLog, "JR Z, %02X\n", offset);
-  }
+    LOG_DEBUG("Executed JR Z,0x%02X\n", e);
+    return;
 }
 
 
-// This is JR NZ, e instruction
-void JRNZe(cpu_t *cpu, uint8_t opcode) {
-  opTbl[0x20].TStates = 12;  // Condition is met
-  u8 offset = fetch8();
-  u16 extended_o = offset;
-  if(isNegative(offset))
-    extended_o |= 0xFF00;
+// JR NZ,e instruction.
+static void opc_JRNZe(cpu_t *cpu, uint8_t opcode) {
+    opc_tbl[0x20].TStates = 12;  // Condition is met.
+    int8_t e = opc_fetch8(cpu);
 
-  if(!(z80.F & FLAG_ZERO))
-    z80.PC += extended_o;
-  else opTbl[0x20].TStates = 7;  // Condition is not met
+    if (!GET_FLAG_ZERO(cpu))
+        cpu->PC += e;
+    else
+        opc_tbl[0x20].TStates = 7;  // Condition is not met.
 
-  if(logInstr) {
-    fprintf(fpLog, "JR NZ, %02X\n", offset);
-  }
+    LOG_DEBUG("Executed JR NZ,0x%02X\n", e);
+    return;
 }
 
 
-// This is JP (HL) instruction
-void JPHL(cpu_t *cpu, uint8_t opcode) {
-  z80.PC = z80.HL;
-  if(logInstr) {
-    writeLog("JP HL\n");
-  }
+// JP (HL) instruction.
+static void opc_JPHL(cpu_t *cpu, uint8_t opcode) {
+    cpu->PC = cpu->HL;
+
+    LOG_DEBUG("Executed JP (HL) HL=0x%04X\n", cpu->HL);
+    return;
 }
 
 
-// This is DJNZ, e instruction
-void DJNZe(cpu_t *cpu, uint8_t opcode) {
-  u8 offset = fetch8();
-  u16 extended_o = offset;
-  if(isNegative(offset))
-    extended_o |= 0xFF00;
+// DJNZ,e instruction.
+static void opc_DJNZe(cpu_t *cpu, uint8_t opcode) {
+    int8_t e = opc_fetch8(cpu);
+    cpu->B--;
 
-  z80.B--;
+    if (cpu->B) {
+        opc_tbl[0x10].TStates = 13;
+        cpu->PC += e;
+    } else
+        opc_tbl[0x10].TStates = 8;
 
-  if(z80.B != 0) {
-    opTbl[0x10].TStates = 13;
-    z80.PC += extended_o;
-  }
-  else opTbl[0x10].TStates = 8;
-
-  if(logInstr) {
-    fprintf(fpLog, "DJNZ %02X\n", offset);
-  }
+    LOG_DEBUG("Executed DJNZ 0x%02X\n", e);
+    return;
 }
 
 
-// This is CALL nn instruction
-void CALLnn(cpu_t *cpu, uint8_t opcode) {
-  u16 nn = fetch16();
-  stackPush(z80.PC);
-  z80.PC = nn;
-  if(logInstr) {
-    fprintf(fpLog, "CALL %04X\n", nn);
-  }
+// CALL nn instruction.
+static void opc_CALLnn(cpu_t *cpu, uint8_t opcode) {
+    uint16_t nn = opc_fetch16(cpu);
+    cpu_stackPush(cpu, cpu->PC);
+    cpu->PC = nn;
+
+    LOG_DEBUG("Executed CALL 0x%04X\n", nn);
+    return;
 }
 
 
-// This is CALL cc, nn instruction
-void CALLccnn(cpu_t *cpu, uint8_t opcode) {
-  u16 nn = fetch16();
-  u8 cc = ((opcode >> 3) & 0x07);
+// CALL cc,nn instruction.
+static void opc_CALLccnn(cpu_t *cpu, uint8_t opcode) {
+    uint16_t nn = opc_fetch16(cpu);
+    uint8_t cc = ((opcode >> 3) & 0x07);
 
-  switch(cc) {
-    case 0x00: // NZ non-zero
-      if(!(z80.F & FLAG_ZERO)) {
-        stackPush(z80.PC);
-        z80.PC = nn;
-        opTbl[0xC4].TStates = 17; // Latency if cc is true
-      }
-      else opTbl[0xC4].TStates = 10; // Latency if cc is false
-      if(logInstr) {
-        fprintf(fpLog, "CALL NZ, %04X\n", nn);
-      }
-      break;
-    case 0x01: // Z zero
-      if(z80.F & FLAG_ZERO) {
-        stackPush(z80.PC);
-        z80.PC = nn;
-        opTbl[0xCC].TStates = 17; // Latency if cc is true
-      }
-      else opTbl[0xCC].TStates = 10; // Latency if cc is false
-      if(logInstr) {
-        fprintf(fpLog, "CALL Z, %04X\n", nn);
-      }
-      break;
-    case 0x02: // NC no carry
-      if(!(z80.F & FLAG_CARRY)) {
-        stackPush(z80.PC);
-        z80.PC = nn;
-        opTbl[0xD4].TStates = 17; // Latency if cc is true
-      }
-      else opTbl[0xD4].TStates = 10; // Latency if cc is false
-      if(logInstr) {
-        fprintf(fpLog, "CALL NC, %04X\n", nn);
-      }
-      break;
-    case 0x03: // C carry
-      if(z80.F & FLAG_CARRY) {
-        stackPush(z80.PC);
-        z80.PC = nn;
-        opTbl[0xDC].TStates = 17; // Latency if cc is true
-      }
-      else opTbl[0xDC].TStates = 10; // Latency if cc is false
-      if(logInstr) {
-        fprintf(fpLog, "CALL C, %04X\n", nn);
-      }
-      break;
-    case 0x04: // P/V parity odd (P/V reset)
-      if(!(z80.F & FLAG_PARITY)) {
-        stackPush(z80.PC);
-        z80.PC = nn;
-        opTbl[0xE4].TStates = 17; // Latency if cc is true
-      }
-      else opTbl[0xE4].TStates = 10; // Latency if cc is false
-      if(logInstr) {
-        fprintf(fpLog, "CALL PO, %04X\n", nn);
-      }
-      break;
-    case 0x05: // P/V parity even (P/V set)
-      if(z80.F & FLAG_PARITY) {
-        stackPush(z80.PC);
-        z80.PC = nn;
-        opTbl[0xEC].TStates = 17; // Latency if cc is true
-      }
-      else opTbl[0xEC].TStates = 10; // Latency if cc is false
-      if(logInstr) {
-        fprintf(fpLog, "CALL PE, %04X\n", nn);
-      }
-      break;
-    case 0x06: // S sign positive (S reset)
-      if(!(z80.F & FLAG_SIGN)) {
-        stackPush(z80.PC);
-        z80.PC = nn;
-        opTbl[0xF4].TStates = 17; // Latency if cc is true
-      }
-      else opTbl[0xF4].TStates = 10; // Latency if cc is false
-      if(logInstr) {
-        fprintf(fpLog, "CALL P, %04X\n", nn);
-      }
-      break;
-    case 0x07: // S sign negative (S set)
-      if(z80.F & FLAG_SIGN) {
-        stackPush(z80.PC);
-        z80.PC = nn;
-        opTbl[0xFC].TStates = 17; // Latency if cc is true
-      }
-      else opTbl[0xFC].TStates = 10; // Latency if cc is false
-      if(logInstr) {
-        fprintf(fpLog, "CALL M, %04X\n", nn);
-      }
-      break;
-    default:
-      die("[ERROR] Invalid condition in CALL cc, nn instruction.");
-  }
+    switch(cc) {
+        case 0x00: // NZ non-zero.
+            if (!GET_FLAG_ZERO(cpu)) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = nn;
+                opc_tbl[0xC4].TStates = 17;
+            } else
+                opc_tbl[0xC4].TStates = 10;
+            LOG_DEBUG("Executed CALL NZ,0x%04X\n", nn);
+            break;
+        case 0x01: // Z zero.
+            if (GET_FLAG_ZERO(cpu)) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = nn;
+                opc_tbl[0xCC].TStates = 17;
+            } else
+                opc_tbl[0xCC].TStates = 10;
+            LOG_DEBUG("Executed CALL Z,0x%04X\n", nn);
+            break;
+        case 0x02: // NC no carry.
+            if (!GET_FLAG_CARRY(cpu)) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = nn;
+                opc_tbl[0xD4].TStates = 17;
+            } else
+                opc_tbl[0xD4].TStates = 10;
+            LOG_DEBUG("Executed CALL NC,0x%04X\n", nn);
+            break;
+        case 0x03: // C carry.
+            if (GET_FLAG_CARRY(cpu)) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = nn;
+                opc_tbl[0xDC].TStates = 17;
+            } else
+                opc_tbl[0xDC].TStates = 10;
+            LOG_DEBUG("Executed CALL C,0x%04X\n", nn);
+            break;
+        case 0x04: // P/V parity odd (P/V reset).
+            if (!GET_FLAG_PARITY(cpu)) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = nn;
+                opc_tbl[0xE4].TStates = 17;
+            } else
+                opc_tbl[0xE4].TStates = 10;
+            LOG_DEBUG("Executed CALL PO,0x%04X\n", nn);
+            break;
+        case 0x05: // P/V parity even (P/V set).
+            if (GET_FLAG_PARITY(cpu)) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = nn;
+                opc_tbl[0xEC].TStates = 17;
+            } else
+                opc_tbl[0xEC].TStates = 10;
+            LOG_DEBUG("Executed CALL PE,0x%04X\n", nn);
+            break;
+        case 0x06: // S sign positive (S reset).
+            if(!GET_FLAG_SIGN(cpu)) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = nn;
+                opc_tbl[0xF4].TStates = 17;
+            } else
+                opc_tbl[0xF4].TStates = 10;
+            LOG_DEBUG("Executed CALL P,0x%04X\n", nn);
+            break;
+        case 0x07: // S sign negative (S set).
+            if (GET_FLAG_SIGN(cpu)) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = nn;
+                opc_tbl[0xFC].TStates = 17;
+            } else
+                opc_tbl[0xFC].TStates = 10;
+            LOG_DEBUG("Executed CALL M,0x%04X\n", nn);
+            break;
+        default:
+            LOG_FATAL("Invalid condition in CALL cc,nn instruction.\n");
+            exit(1);
+    }
 }
 
 
-// This is RET instruction
-void RET(cpu_t *cpu, uint8_t opcode) {
-  z80.PC = stackPop();
-  if(logInstr) {
-    writeLog("RET\n");
-  }
+// RET instruction.
+static void opc_RET(cpu_t *cpu, uint8_t opcode) {
+    cpu->PC = cpu_stackPop(cpu);
+
+    LOG_DEBUG("Executed RET\n");
+    return;
 }
 
 
-// This is RET cc instruction
-void RETcc(cpu_t *cpu, uint8_t opcode) {
-  u8 cc = ((opcode >> 3) & 0x07);
+// RET cc instruction.
+static void opc_RETcc(cpu_t *cpu, uint8_t opcode) {
+    uint8_t cc = ((opcode >> 3) & 0x07);
 
-  switch(cc) {
-    case 0x00: // NZ non-zero
-      if(!(z80.F & FLAG_ZERO)) {
-        z80.PC = stackPop();
-        opTbl[0xC0].TStates = 11; // Latency if cc is true
-      }
-      else opTbl[0xC0].TStates = 5; // Latency if cc is false
-      if(logInstr) {
-        writeLog("RET NZ\n");
-      }
-      break;
-    case 0x01: // Z zero
-      if(z80.F & FLAG_ZERO) {
-        z80.PC = stackPop();
-        opTbl[0xC8].TStates = 11; // Latency if cc is true
-      }
-      else opTbl[0xC8].TStates = 5; // Latency if cc is false
-      if(logInstr) {
-        writeLog("RET Z\n");
-      }
-      break;
-    case 0x02: // NC no carry
-      if(!(z80.F & FLAG_CARRY)) {
-        z80.PC = stackPop();
-        opTbl[0xD0].TStates = 11; // Latency if cc is true
-      }
-      else opTbl[0xD0].TStates = 5; // Latency if cc is false
-      if(logInstr) {
-        writeLog("RET NC\n");
-      }
-      break;
-    case 0x03: // C carry
-      if(z80.F & FLAG_CARRY) {
-        z80.PC = stackPop();
-        opTbl[0xD8].TStates = 11; // Latency if cc is true
-      }
-      else opTbl[0xD8].TStates = 5; // Latency if cc is false
-      if(logInstr) {
-        writeLog("RET C\n");
-      }
-      break;
-    case 0x04: // P/V parity odd (P/V reset)
-      if(!(z80.F & FLAG_PARITY)) {
-        z80.PC = stackPop();
-        opTbl[0xE0].TStates = 11; // Latency if cc is true
-      }
-      else opTbl[0xE0].TStates = 5; // Latency if cc is false
-      if(logInstr) {
-        writeLog("RET PO\n");
-      }
-      break;
-    case 0x05: // P/V parity even (P/V set)
-      if(z80.F & FLAG_PARITY) {
-        z80.PC = stackPop();
-        opTbl[0xE8].TStates = 11; // Latency if cc is true
-      }
-      else opTbl[0xE8].TStates = 5; // Latency if cc is false
-      if(logInstr) {
-        writeLog("RET PE\n");
-      }
-      break;
-    case 0x06: // S sign positive (S reset)
-      if(!(z80.F & FLAG_SIGN)) {
-        z80.PC = stackPop();
-        opTbl[0xF0].TStates = 11; // Latency if cc is true
-      }
-      else opTbl[0xF0].TStates = 5; // Latency if cc is false
-      if(logInstr) {
-        writeLog("RET P\n");
-      }
-      break;
-    case 0x07: // S sign negative (S set)
-      if(z80.F & FLAG_SIGN) {
-        z80.PC = stackPop();
-        opTbl[0xF8].TStates = 11; // Latency if cc is true
-      }
-      else opTbl[0xF8].TStates = 5; // Latency if cc is false
-      if(logInstr) {
-        writeLog("RET M\n");
-      }
-      break;
-    default:
-      die("[ERROR] Invalid condition in RET cc instruction.");
-  }
+    switch(cc) {
+        case 0x00: // NZ non-zero.
+            if (!GET_FLAG_ZERO(cpu)) {
+                cpu->PC = cpu_stackPop(cpu);
+                opc_tbl[0xC0].TStates = 11;
+            }
+            else
+                opc_tbl[0xC0].TStates = 5;
+            LOG_DEBUG("Executed RET NZ\n");
+            break;
+        case 0x01: // Z zero.
+            if (GET_FLAG_ZERO(cpu)) {
+                cpu->PC = cpu_stackPop(cpu);
+                opc_tbl[0xC8].TStates = 11;
+            } else
+                opc_tbl[0xC8].TStates = 5;
+            LOG_DEBUG("Executed RET Z\n");
+            break;
+        case 0x02: // NC no carry.
+            if (!GET_FLAG_CARRY(cpu)) {
+                cpu->PC = cpu_stackPop(cpu);
+                opc_tbl[0xD0].TStates = 11;
+            } else
+                opc_tbl[0xD0].TStates = 5;
+            LOG_DEBUG("Executed RET NC\n");
+            break;
+        case 0x03: // C carry.
+            if (GET_FLAG_CARRY(cpu)) {
+                cpu->PC = cpu_stackPop(cpu);
+                opc_tbl[0xD8].TStates = 11;
+            } else
+                opc_tbl[0xD8].TStates = 5;
+            LOG_DEBUG("Executed RET C\n");
+            break;
+        case 0x04: // P/V parity odd (P/V reset).
+            if (!GET_FLAG_PARITY(cpu)) {
+                cpu->PC = cpu_stackPop(cpu);
+                opc_tbl[0xE0].TStates = 11;
+            } else
+                opc_tbl[0xE0].TStates = 5;
+            LOG_DEBUG("Executed RET PO\n");
+            break;
+        case 0x05: // P/V parity even (P/V set).
+            if (GET_FLAG_PARITY(cpu)) {
+                cpu->PC = cpu_stackPop(cpu);
+                opc_tbl[0xE8].TStates = 11;
+            } else
+                opc_tbl[0xE8].TStates = 5;
+            LOG_DEBUG("Executed RET PE\n");
+            break;
+        case 0x06: // S sign positive (S reset).
+            if (!GET_FLAG_SIGN(cpu)) {
+                cpu->PC = cpu_stackPop(cpu);
+                opc_tbl[0xF0].TStates = 11;
+            } else
+                opc_tbl[0xF0].TStates = 5;
+            LOG_DEBUG("Executed RET P\n");
+            break;
+        case 0x07: // S sign negative (S set).
+            if (GET_FLAG_SIGN(cpu)) {
+                cpu->PC = cpu_stackPop(cpu);
+                opc_tbl[0xF8].TStates = 11;
+            } else
+                opc_tbl[0xF8].TStates = 5;
+            LOG_DEBUG("Executed RET M\n");
+            break;
+        default:
+            LOG_FATAL("Invalid condition in RET cc instruction.\n");
+            exit(1);
+    }
 }
 
 
-// This is RST p instruction
-void RSTp(cpu_t *cpu, uint8_t opcode) {
-  u8 t = ((opcode >> 3) & 0x07);
-  stackPush(z80.PC);
+// RST p instruction.
+static void opc_RSTp(cpu_t *cpu, uint8_t opcode) {
+    uint8_t t = ((opcode >> 3) & 0x07);
+    cpu_stackPush(cpu, cpu->PC);
 
-  switch(t) {
-    case 0x00:
-      z80.PC = 0x0000;
-      if(logInstr)
-        writeLog("RST 00h\n");
-      break;
-    case 0x01:
-      z80.PC = 0x0008;
-      if(logInstr)
-        writeLog("RST 08h\n");
-      break;
-    case 0x02:
-      z80.PC = 0x0010;
-      if(logInstr)
-        writeLog("RST 10h\n");
-      break;
-    case 0x03:
-      z80.PC = 0x0018;
-      if(logInstr)
-        writeLog("RST 18h\n");
-      break;
-    case 0x04:
-      z80.PC = 0x0020;
-      if(logInstr)
-        writeLog("RST 20h\n");
-      break;
-    case 0x05:
-      z80.PC = 0x0028;
-      if(logInstr)
-        writeLog("RST 28h\n");
-      break;
-    case 0x06:
-      z80.PC = 0x0030;
-      if(logInstr)
-        writeLog("RST 30h\n");
-      break;
-    case 0x07:
-      z80.PC = 0x0038;
-      if(logInstr)
-        writeLog("RST 38h\n");
-      break;
-    default:
-      die("[ERROR] Invalid t in RST p instruction.");
-  }
+    switch(t) {
+        case 0x00:
+            cpu->PC = 0;
+            LOG_DEBUG("Executed RST 00h\n");
+            break;
+        case 0x01:
+            cpu->PC = 0x8;
+            LOG_DEBUG("Executed RST 08h\n");
+            break;
+        case 0x02:
+            cpu->PC = 0x10;
+            LOG_DEBUG("Executed RST 10h\n");
+            break;
+        case 0x03:
+            cpu->PC = 0x18;
+            LOG_DEBUG("Executed RST 18h\n");
+            break;
+        case 0x04:
+            cpu->PC = 0x20;
+            LOG_DEBUG("Executed RST 20h\n");
+            break;
+        case 0x05:
+            cpu->PC = 0x28;
+            LOG_DEBUG("Executed RST 28h\n");
+            break;
+        case 0x06:
+            cpu->PC = 0x30;
+            LOG_DEBUG("Executed RST 30h\n");
+            break;
+        case 0x07:
+            cpu->PC = 0x38;
+            LOG_DEBUG("Executed RST 38h\n");
+            break;
+        default:
+            LOG_FATAL("Invalid t in RST p instruction.\n");
+            exit(1);
+    }
 }
 
 
-// This is IN A, (n) instruction
-void INAn(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  z80.A = z80.portIn(n);
+// IN A,(n) instruction.
+static void opc_INAn(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    cpu->A = cpu->portIO_in(n);
 
-  if(logInstr) {
-    fprintf(fpLog, "IN A, (n)\t\tn = %02X\n", n);
-  }
+    LOG_DEBUG("Executed IN A,(0x%02X)\n", n);
+    return;
 }
 
 
-// This is OUT (n), A
-void OUTnA(cpu_t *cpu, uint8_t opcode) {
-  u8 n = fetch8();
-  z80.portOut(n, z80.A);
+// OUT (n),A.
+static void opc_OUTnA(cpu_t *cpu, uint8_t opcode) {
+    uint8_t n = opc_fetch8(cpu);
+    cpu->portIO_out(n, cpu->A);
 
-  if(logInstr) {
-    fprintf(fpLog, "OUT (n), A\t\tn = %02X\n", n);
-  }
+    LOG_DEBUG("Executed OUT (0x%02X),A\n", n);
+    return;
 }
 
 
+// Opcodes lookup table.
 opc_t opc_tbl[0x100] = {
     {opc_NOP, 4},
     {opc_LDddnn, 10},

@@ -1,3 +1,4 @@
+#include <ncurses.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -5,6 +6,7 @@
 #include "cpu.h"
 #include "opcodes.h"
 #include "logger.h"
+#include "mc6850.h"
 
 
 extern opc_t opc_tbl[];
@@ -175,6 +177,34 @@ uint16_t cpu_stackPop(cpu_t *cpu) {
 }
 
 
+// Executes maskable interrupts.
+static void cpu_doMaskableINT(cpu_t *cpu) {
+    // TODO: if the previous instruction is EI, does not execute INT.
+    if (cpu_read(cpu, cpu->PC - 1) != 0xFB) {
+        // Checks IFF1 status.
+        if (cpu->IFF1) { // If the interrupt is not masked.
+            // Accepts the interrupt - IFF1 and IFF2 to 0.
+            cpu->IFF1 = 0;
+            cpu->IFF2 = 0;
+            cpu->is_pendingInterrupt = 0;
+            // Interrupt mode 1.
+            if (cpu->IM == 1) {
+                cpu_stackPush(cpu, cpu->PC);
+                cpu->PC = 0x0038;
+                // Two additional cycles required for restarting.
+                cpu->cycles += 2;
+                LOG_DEBUG("Caught mode 1 interrupt.\n");
+            } else {
+                LOG_FATAL("Interrupt mode 0 and 2 are not supported yet.\n");
+                exit(1);
+            }
+        } else
+            LOG_DEBUG("Interrupts are masked.\n");
+    }
+    return;
+}
+
+
 // Starts cpu emulation. Executes at most 'instr_limit' instructions or
 // never stops if -1 is given.
 void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
@@ -203,82 +233,51 @@ void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
 
         // Detects interrupts at the end of instruction's execution.
         if (cpu->is_pendingInterrupt) {
-            if (is_pendingNMI) {
+            if (cpu->is_pendingNMI) {
                 LOG_FATAL("NMI is not managed yet.");
                 exit(1);
             } else {
                 // Maskable interrupts.
-                // cpu_maskableInt();
+                cpu_doMaskableINT(cpu);
             }
         }
 
-        // TODO: move this code into ACIA? It should be called by who calls
-        // cpu_emulate.
+        // After the execution of the current instruction, checks for
+        // key pressed with kbhit(). If one key was pressed, then puts it
+        // into RDR, set RX_FULL and is_pendingInterrupt.
 
-        // After the execution of the current instruction, check for
-        // key pressed with kbhit(). If one key was pressed, then put it
-        // into RDR, set RX_FULL and pendingInterrupt.
+        if (kbhit() && !(mc6850_getStatus() & RX_FULL)) {
+            char ch = getch();
+            if (ch == 0x0A) {
+                mc6850_setRDR(0x0D); // Carriage return.
+            } else
+                mc6850_setRDR(ch);
 
-        // if(kbhit() && !(m6850.status & RX_FULL)) {
-        //     char ch = getch();
-        //     if(ch == 0x0A) {
-        //         m6850.RDR = 0x0D; // Carriage return
-        //     }
-        //     else m6850.RDR = ch;
-        //     m6850.status |= RX_FULL;
-        //     z80.pendingInterrupt = 1;
-        // }
+            mc6850_setStatus(mc6850_getStatus() | RX_FULL);
+            cpu->is_pendingInterrupt = 1;
+        }
 
-    // After checking incoming characters, check the ACIA status register
-    // and determine if a byte is ready to be transmitted.
+        // After checking incoming characters, checks the ACIA status register
+        // and determines if a byte is ready to be transmitted.
 
-    // if(!(m6850.status & TX_EMPTY)) {
-    //   char charToPrint = m6850.TDR;
-    //   if(charToPrint == 0x0D) { // Carriage return
-    //     printw("\n");
-    //   }
-    //   else if(charToPrint == 0x0C) { // New page - Form Feed
-    //     //clear();
-    //   }
-    //   else if(charToPrint == 0x0A) {
-    //     // Do nothing
-    //   }
-    //   else {
-    //     printw("%c", charToPrint);
-    //   }
-    //   m6850.status |= TX_EMPTY;
-    //   refresh();
-    // }
+        if (!(mc6850_getStatus() & TX_EMPTY)) {
+            char charToPrint = mc6850_getTDR();
+            if (charToPrint == 0x0D) { // Carriage return.
+                printw("\n");
+            } else if (charToPrint == 0x0C) { // New page - Form Feed.
+                clear();
+            } else if (charToPrint == 0x0A) {
+                // Do nothing
+            } else
+                printw("%c", charToPrint);
 
+            mc6850_setStatus(mc6850_getStatus() | TX_EMPTY);
+            refresh();
+        }
     }
+
     return;
 }
-
-
-/*
-
-static void causeMaskblInt() {
-// TODO: if the previous instruction is EI, does not execute INT.
-if(readByte(z80.PC - 1) != 0xFB)
-  // Check IFF1 status
-  if(z80.IFF1) { // If the interrupt is not masked
-    // Accept the interrupt - IFF1 and IFF2 to 0
-    z80.IFF1 = 0;
-    z80.IFF2 = 0;
-    z80.pendingInterrupt = 0; // Reset pending interrupt flag
-    // Interrupt mode 1
-    if(z80.IM == 1) {
-      stackPush(z80.PC);
-      z80.PC = 0x0038;
-      z80.cycles += 2; // Two additional cycles required for restarting
-      writeLog("[INFO] Caught mode 1 interrupt.\n");
-    }
-    // TODO: IM 0 and IM 2 are still missing
-    else die("[ERROR] Interrupt mode not supported.\n");
-  }
-}
-
-*/
 
 
 // Prints the content of the given memory chunk.
@@ -316,9 +315,9 @@ void cpu_dumpRegisters(cpu_t *cpu) {
         cpu->A, cpu->F, cpu->Ar, cpu->Fr, cpu->B, cpu->C, cpu->Br, cpu->Cr,
         cpu->D, cpu->E, cpu->Dr, cpu->Er, cpu->H, cpu->L, cpu->Hr, cpu->Lr,
         cpu->IX, cpu->IY, cpu->SP, cpu->PC, cpu->IFF1, cpu->IFF2, cpu->IM,
-        cpu->I, GET_FLAG_SIGN(cpu->F), GET_FLAG_ZERO(cpu->F),
-        GET_FLAG_HCARRY(cpu->F), GET_FLAG_PARITY(cpu->F),
-        GET_FLAG_ADDSUB(cpu->F), GET_FLAG_ADDSUB(cpu->F));
+        cpu->I, GET_FLAG_SIGN(cpu), GET_FLAG_ZERO(cpu),
+        GET_FLAG_HCARRY(cpu), GET_FLAG_PARITY(cpu),
+        GET_FLAG_ADDSUB(cpu), GET_FLAG_ADDSUB(cpu));
 
     return;
 }

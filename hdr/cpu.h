@@ -2,7 +2,7 @@
 #define _CPU_H_
 
 #include <stdint.h>
-
+#include <stdbool.h>
 
 ///////////////////////////////////////////////////////////
 // FLAG REGISTER BITS DEFINITIONS
@@ -149,9 +149,9 @@ typedef struct {
     bool is_pendingInterrupt;
     bool is_pendingNMI;
 
-    // Input/Output
-    uint8_t (*portIn) (int32_t port);
-    void (*portOut) (int32_t port, uint8_t value);
+    // IO.
+    uint8_t (*portIO_in) (uint8_t port);
+    void (*portIO_out) (uint8_t port, uint8_t data);
 } cpu_t;
 
 
