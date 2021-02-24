@@ -18,11 +18,13 @@
 #define ROM_PATH "./rom/ROM_32K.HEX"
 
 
+cpu_t z80;
+
 // Exit handler in case SIGINT is received.
 static void exitHandler(int sigNumber) {
-    // TODO: print memory content? Dump registers?
     logger_close();
-    endwin();         // Gracefully close ncurses windows
+    cpu_destroy(&z80);
+    endwin();         // Gracefully close ncurses windows.
     exit(1);
 }
 
@@ -98,7 +100,7 @@ int main(int argc, char **argv) {
         }
     } while(next_option != -1);
 
-
+    // NCURSES initialization.
     initscr();              // Initialize terminal
     cbreak();               // Set per-character buffer
     noecho();               // Do not echo characters
@@ -140,12 +142,12 @@ int main(int argc, char **argv) {
     // TODO: how can we deallocate memory? raise() instead of exit and
     // cpu_destroy in exit handler?
 
+
     // Memory configuration:
     // 0x0000 - 0x7FFF -> ROM
     // 0x8000 - 0xFFFF -> RAM
     mem_chunk_t ram = {"RAM", CHUNK_READWRITE, 0x8000, 0x8000, ram_buff, NULL};
     mem_chunk_t rom = {"ROM", CHUNK_READONLY, 0, 0x8000, rom_buff, &ram};
-    cpu_t z80;
 
     // CPU initialization.
     if (cpu_init(&z80, &rom)) {

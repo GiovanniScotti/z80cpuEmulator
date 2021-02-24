@@ -6,3 +6,4 @@
 *.o
 
 z80emulator
+log.txt

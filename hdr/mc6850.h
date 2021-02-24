@@ -17,10 +17,9 @@
 */
 
 typedef struct {
-    uint8_t TDR; // Transmit Data Register.
-    uint8_t RDR; // Receive Data Register.
-    // Status Registers.
-    uint8_t status;
+    uint8_t TDR;    // Transmit Data Register.
+    uint8_t RDR;    // Receive Data Register.
+    uint8_t status; // Status Register.
 } mc6850_t;
 
 

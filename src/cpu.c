@@ -9,9 +9,6 @@
 #include "mc6850.h"
 
 
-extern opc_t opc_tbl[];
-
-
 // Initializes the CPU data structures.
 // Returns 0 if no errors occur.
 int32_t cpu_init(cpu_t *cpu, mem_chunk_t *mem_list) {

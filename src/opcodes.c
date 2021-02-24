@@ -592,9 +592,9 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
         opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, ~c, res);
+        opc_testVFlag8(cpu, cpu->A, ~data, !c, res);
         SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, ~data, ~c, 1);
+        opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
 
         cpu->A = res;
         LOG_DEBUG("Executed SBC A,(IX+d) IX+d=0x%04X\n", addr);
@@ -1131,9 +1131,9 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
         opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, ~c, res);
+        opc_testVFlag8(cpu, cpu->A, ~data, !c, res);
         SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, ~data, ~c, 1);
+        opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
 
         cpu->A = res;
         LOG_DEBUG("Executed SBC A,(IY+d) IY+d=0x%04X\n", addr);
@@ -1925,9 +1925,9 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
         opc_testSFlag16(cpu, res);
         opc_testZFlag16(cpu, res);
         opc_testHFlag16(cpu, cpu->HL, ~data, res, 1);
-        opc_testVFlag8(cpu, cpu->HL, ~data, ~c, res);
+        opc_testVFlag8(cpu, cpu->HL, ~data, !c, res);
         SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->HL, ~data, ~c, 1);
+        opc_testCFlag8(cpu, cpu->HL, ~data, !c, 1);
 
         cpu->HL = res;
         LOG_DEBUG("Executed SBC HL,%s\n", opc_regName16(src, REG16_DD));
@@ -2260,9 +2260,9 @@ static void opc_SBCAr(cpu_t *cpu, uint8_t opcode) {
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
     opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, ~c, res);
+    opc_testVFlag8(cpu, cpu->A, ~data, !c, res);
     SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, ~data, ~c, 1);
+    opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
 
     cpu->A = res;
     LOG_DEBUG("Executed SBC A,%s\n", opc_regName8(src));
@@ -2299,9 +2299,9 @@ static void opc_SBCAn(cpu_t *cpu, uint8_t opcode) {
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
     opc_testHFlag8(cpu, cpu->A, ~n, res, 1);
-    opc_testVFlag8(cpu, cpu->A, ~n, ~c, res);
+    opc_testVFlag8(cpu, cpu->A, ~n, !c, res);
     SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, ~n, ~c, 1);
+    opc_testCFlag8(cpu, cpu->A, ~n, !c, 1);
 
     cpu->A = res;
     LOG_DEBUG("Executed SBC A,0x%02X\n", n);
@@ -2338,9 +2338,9 @@ static void opc_SBCAHL(cpu_t *cpu, uint8_t opcode) {
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
     opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, ~c, res);
+    opc_testVFlag8(cpu, cpu->A, ~data, !c, res);
     SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, ~data, ~c, 1);
+    opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
 
     cpu->A = res;
     LOG_DEBUG("Executed SBC A,(HL) HL=0x%04X\n", cpu->HL);
