@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdint.h>
 #include <stdarg.h>
 #include "logger.h"
 
@@ -7,11 +6,13 @@
 static int32_t logger_verbosity = 0;
 // Logger file pointer.
 static FILE *fplog = NULL;
+// Enables/disabled prints on stderr/stdout.
+static bool logger_no_prints = false;
 
 
 // Initializes the logger by opening the log file.
 // This function is called in case logging to file is enabled.
-void logger_open(const char *logfile) {
+void logger_open(const char *logfile, bool is_terminal) {
     if (logfile != NULL) {
         fplog = fopen(logfile, "w");
         if (fplog == NULL)
@@ -19,6 +20,11 @@ void logger_open(const char *logfile) {
         else
             LOG_INFO("Logging file successfully created (%s).\n", logfile);
     }
+
+    // If the serial terminal is enabled, log messages are stored in
+    // the log file only. Prints are disabled.
+    logger_no_prints = is_terminal;
+
     return;
 }
 
@@ -37,10 +43,13 @@ void logger_close(void) {
 void logger_write(const int32_t level, const char *format, ...) {
     va_list args;
 
-    // Prints on the stderr.
     if (level <= logger_verbosity) {
-        va_start(args, format);
-        vfprintf(stderr, format, args);
+        // Prints on the stderr.
+        if (!logger_no_prints) {
+            va_start(args, format);
+            vfprintf(stderr, format, args);
+        }
+        // Prints on log file.
         if (fplog != NULL) {
             va_start(args, format);
             vfprintf(fplog, format, args);

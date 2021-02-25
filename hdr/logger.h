@@ -1,6 +1,9 @@
 #ifndef _LOGGER_H_
 #define _LOGGER_H_
 
+#include <stdint.h>
+#include <stdbool.h>
+
 // Verbosity levels. Messages with a verbosity less or equal to the current
 // level are actually printed.
 #define LOGGER_FATAL_LEVEL   1
@@ -23,10 +26,10 @@
 
 // Debug messages can be fully customized. No prefix is given.
 #define LOG_DEBUG(args...) \
-    logger_write(LOGGER_DEBUG_LEVEL, args)
+    logger_write(LOGGER_DEBUG_LEVEL, "[DEBUG] " args)
 
 
-void logger_open(const char *logfile);
+void logger_open(const char *logfile, bool is_terminal);
 void logger_close(void);
 void logger_write(const int32_t level, const char *format, ...);
 void logger_set_verbosity(int32_t level);

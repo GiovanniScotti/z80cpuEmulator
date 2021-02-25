@@ -144,9 +144,9 @@ typedef struct {
     //  19 clock cycles are required (7 to fetch the lower bits, 6 to save
     //  the PC and 6 to obtain the jump address).
 
-    // is_pendingInterrupt is set when any kind of interrupt is pending
+    // is_pendingMI is set when the pending interrupt is maskable.
     // is_pendingNMI is set when the pending interrupt is a NMI.
-    bool is_pendingInterrupt;
+    bool is_pendingMI;
     bool is_pendingNMI;
 
     // IO.

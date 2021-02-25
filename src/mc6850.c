@@ -14,7 +14,7 @@ static mc6850_t mc6850;
 int32_t mc6850_init(void) {
     memset(&mc6850, 0, sizeof(mc6850_t));
     mc6850.status |= TX_EMPTY;
-    LOG_DEBUG("MC6850 ACIA initialized.\n");
+    LOG_INFO("MC6850 ACIA initialized.\n");
 
     return 0;
 }

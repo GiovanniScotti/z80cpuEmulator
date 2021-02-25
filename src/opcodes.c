@@ -14,10 +14,8 @@ typedef enum {
 } reg16_t;
 
 
-/*
-  TODO: DAA is missing, pag. 173.
-  TODO: Complete IN and OUT, pag. 298.
-*/
+// TODO: DAA is missing, pag. 173.
+// TODO: Complete IN and OUT, pag. 298.
 
 
 // Returns one byte from the current PC.
@@ -3399,7 +3397,7 @@ static void opc_JRZe(cpu_t *cpu, uint8_t opcode) {
     else
         opc_tbl[0x28].TStates = 7;  // Condition is not met.
 
-    LOG_DEBUG("Executed JR Z,0x%02X\n", e);
+    LOG_DEBUG("Executed JR Z,0x%02hhX\n", e);
     return;
 }
 

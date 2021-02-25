@@ -18,13 +18,15 @@
 #define ROM_PATH "./rom/ROM_32K.HEX"
 
 
-cpu_t z80;
+static bool is_terminal = false;
+static cpu_t z80;
 
 // Exit handler in case SIGINT is received.
 static void exitHandler(int sigNumber) {
     logger_close();
     cpu_destroy(&z80);
-    endwin();         // Gracefully close ncurses windows.
+    if (is_terminal)
+        endwin();
     exit(1);
 }
 
@@ -35,6 +37,7 @@ static void print_usage(FILE *stream, const char *this_program, int32_t exit_cod
     fprintf(stream, " -h --help        Display this help information.\n"
                     " -l --logfile     Output file path for logging messages.\n"
                     " -d --verb-level  Debug verbosity level.\n"
+                    " -t --terminal    Enables serial terminal.\n"
                     " -v --version     Print current version.\n");
     exit(exit_code);
 }
@@ -59,11 +62,12 @@ int main(int argc, char **argv) {
     // Parses command line options.
     const char *this_program = argv[0];
     int32_t next_option;
-    const char * const short_options = "hl:d:v";
+    const char * const short_options = "hl:d:tv";
     const struct option long_options[] = {
         {"help",       0, NULL, 'h'},
         {"logfile",    1, NULL, 'l'},
         {"verb-level", 1, NULL, 'd'},
+        {"terminal",   0, NULL, 't'},
         {"version",    0, NULL, 'v'},
         { NULL,        0, NULL,  0 }
     };
@@ -86,6 +90,10 @@ int main(int argc, char **argv) {
                 debug_level = atoi(optarg);
                 break;
 
+            case 't': // Serial terminal.
+                is_terminal = true;
+                break;
+
             case 'v': // Shows version.
                 print_version(stdout, 0);
 
@@ -101,16 +109,17 @@ int main(int argc, char **argv) {
     } while(next_option != -1);
 
     // NCURSES initialization.
-    initscr();              // Initialize terminal
-    cbreak();               // Set per-character buffer
-    noecho();               // Do not echo characters
-    nodelay(stdscr, TRUE);  // No delay for getch function
-    scrollok(stdscr, TRUE); // Set auto scrolling
-
+    if (is_terminal) {
+        initscr();              // Initialize terminal
+        cbreak();               // Set per-character buffer
+        noecho();               // Do not echo characters
+        nodelay(stdscr, TRUE);  // No delay for getch function
+        scrollok(stdscr, TRUE); // Set auto scrolling
+    }
 
     // Initializes the logger and the verbosity level.
     logger_set_verbosity(debug_level);
-    logger_open(logfile);
+    logger_open(logfile, is_terminal);
 
     // The user can use CTRL+C at any time to abort emulator execution.
     // The exitHandler takes care of gracefully close the program.
@@ -167,7 +176,9 @@ int main(int argc, char **argv) {
     // Termination.
     cpu_destroy(&z80);
     logger_close();
-    endwin();
+
+    if (is_terminal)
+        endwin();
 
     return 0;
 }

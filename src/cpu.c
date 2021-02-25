@@ -14,7 +14,7 @@
 int32_t cpu_init(cpu_t *cpu, mem_chunk_t *mem_list) {
 
     if (mem_list == NULL) {
-        LOG_ERROR("Cannot init the cpu. No memory chunks provided.");
+        LOG_ERROR("Cannot init the cpu. No memory chunks provided.\n");
         return 1;
     }
 
@@ -112,7 +112,7 @@ void cpu_reset(cpu_t *cpu) {
     cpu->IFF1 = 0;
     cpu->IFF2 = 0;
     cpu->IM = INT_MODE_0;
-    cpu->is_pendingInterrupt = 0;
+    cpu->is_pendingMI = 0;
     cpu->is_pendingNMI = 0;
 
     return;
@@ -141,7 +141,7 @@ void cpu_write(cpu_t *cpu, const uint8_t data, const uint16_t addr) {
     for (mem_chunk_t *mc = cpu->memory; mc != NULL; mc = mc->next) {
         if (WHITIN(addr, mc->start, mc->start + mc->size - 1)) {
             if (mc->type == CHUNK_READONLY) {
-                LOG_FATAL("Cannot write to read-only memory at address 0x%04X.",
+                LOG_FATAL("Cannot write to read-only memory at address 0x%04X.\n",
                     addr);
                 exit(1);
             }
@@ -174,18 +174,31 @@ uint16_t cpu_stackPop(cpu_t *cpu) {
 }
 
 
+// Executes non-maskable interrupts. Restarts from 0x66;
+static void cpu_doNonMaskableINT(cpu_t *cpu) {
+    cpu->IFF1 = 0;
+    cpu->is_pendingNMI = 0;
+    cpu->halt = 0;
+    cpu_stackPush(cpu, cpu->PC);
+    cpu->PC = 0x0066;
+    LOG_DEBUG("Caught non-maskable interrupt.\n");
+    return;
+}
+
+
 // Executes maskable interrupts.
 static void cpu_doMaskableINT(cpu_t *cpu) {
-    // TODO: if the previous instruction is EI, does not execute INT.
+    // If the previous instruction is EI (0xFB), does not execute INT.
     if (cpu_read(cpu, cpu->PC - 1) != 0xFB) {
         // Checks IFF1 status.
         if (cpu->IFF1) { // If the interrupt is not masked.
             // Accepts the interrupt - IFF1 and IFF2 to 0.
             cpu->IFF1 = 0;
             cpu->IFF2 = 0;
-            cpu->is_pendingInterrupt = 0;
+            cpu->is_pendingMI = 0;
+            cpu->halt = 0;
             // Interrupt mode 1.
-            if (cpu->IM == 1) {
+            if (cpu->IM == INT_MODE_1) {
                 cpu_stackPush(cpu, cpu->PC);
                 cpu->PC = 0x0038;
                 // Two additional cycles required for restarting.
@@ -195,8 +208,7 @@ static void cpu_doMaskableINT(cpu_t *cpu) {
                 LOG_FATAL("Interrupt mode 0 and 2 are not supported yet.\n");
                 exit(1);
             }
-        } else
-            LOG_DEBUG("Interrupts are masked.\n");
+        }
     }
     return;
 }
@@ -205,20 +217,18 @@ static void cpu_doMaskableINT(cpu_t *cpu) {
 // Starts cpu emulation. Executes at most 'instr_limit' instructions or
 // never stops if -1 is given.
 void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
-    LOG_INFO("Emulation started.");
+    LOG_INFO("Emulation started.\n");
 
     int32_t instr_count = 0;
     bool do_inf_loop = (instr_limit < 0);
 
     while (do_inf_loop || (instr_count < instr_limit)) {
-        if (cpu->halt) {
-            // Manages halt state. Exits when an interrupt occurs.
-            LOG_FATAL("HALT is not managed yet.");
-            exit(1);
-        }
+        uint8_t opcode = 0; // NOP, default for HALT;
 
-        // Fetches instruction.
-        uint8_t opcode = opc_fetch8(cpu);
+        if (!cpu->halt) {
+            // Fetches instruction and increases the PC.
+            opcode = opc_fetch8(cpu);
+        }
 
         // Executes instruction.
         opc_tbl[opcode].execute(cpu, opcode);
@@ -229,15 +239,14 @@ void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
         // TODO: should we increment register R?
 
         // Detects interrupts at the end of instruction's execution.
-        if (cpu->is_pendingInterrupt) {
-            if (cpu->is_pendingNMI) {
-                LOG_FATAL("NMI is not managed yet.");
-                exit(1);
-            } else {
-                // Maskable interrupts.
-                cpu_doMaskableINT(cpu);
-            }
-        }
+        // NMIs have priority over MI.
+        if (cpu->is_pendingNMI)
+            cpu_doNonMaskableINT(cpu);
+        else if (cpu->is_pendingMI)
+            cpu_doMaskableINT(cpu);
+
+
+        // TODO: peripheral management. Do we need callbacks of any kind?
 
         // After the execution of the current instruction, checks for
         // key pressed with kbhit(). If one key was pressed, then puts it
@@ -251,7 +260,7 @@ void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
                 mc6850_setRDR(ch);
 
             mc6850_setStatus(mc6850_getStatus() | RX_FULL);
-            cpu->is_pendingInterrupt = 1;
+            cpu->is_pendingMI = 1;
         }
 
         // After checking incoming characters, checks the ACIA status register
