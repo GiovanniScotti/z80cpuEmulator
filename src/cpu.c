@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <signal.h>
 
 #include "cpu.h"
 #include "opcodes.h"
@@ -131,7 +132,8 @@ uint8_t cpu_read(cpu_t *cpu, const uint16_t addr) {
     }
 
     LOG_FATAL("Memory read error at address 0x%04X.\n", addr);
-    exit(1);
+    raise(SIGINT);
+    return 0;
 }
 
 
@@ -143,7 +145,7 @@ void cpu_write(cpu_t *cpu, const uint8_t data, const uint16_t addr) {
             if (mc->type == CHUNK_READONLY) {
                 LOG_FATAL("Cannot write to read-only memory at address 0x%04X.\n",
                     addr);
-                exit(1);
+                raise(SIGINT);
             }
 
             if (mc->type == CHUNK_READWRITE) {
@@ -154,7 +156,7 @@ void cpu_write(cpu_t *cpu, const uint8_t data, const uint16_t addr) {
     }
 
     LOG_FATAL("Memory write error at address 0x%04X.\n", addr);
-    exit(1);
+    raise(SIGINT);
 }
 
 
@@ -198,15 +200,30 @@ static void cpu_doMaskableINT(cpu_t *cpu) {
             cpu->is_pendingMI = 0;
             cpu->halt = 0;
             // Interrupt mode 1.
-            if (cpu->IM == INT_MODE_1) {
+            if (cpu->IM == INT_MODE_0) {
+                cpu_stackPush(cpu, cpu->PC);
+                /* TODO: instruction execution. */
+                cpu->cycles += 2;
+                LOG_FATAL("Interrupt mode 0 not supported yet.\n");
+                raise(SIGINT);
+            } else if (cpu->IM == INT_MODE_1) {
                 cpu_stackPush(cpu, cpu->PC);
                 cpu->PC = 0x0038;
                 // Two additional cycles required for restarting.
-                cpu->cycles += 2;
+                // RST p requires 11 cycles.
+                cpu->cycles += 13;
                 LOG_DEBUG("Caught mode 1 interrupt.\n");
+            } else if (cpu->IM == INT_MODE_2) {
+                cpu_stackPush(cpu, cpu->PC);
+                uint16_t rst_addr = ((cpu->I << 8) | (cpu->int_data & 0xFE));
+                uint8_t int_addrL = cpu_read(cpu, rst_addr);
+                uint8_t int_addrH = cpu_read(cpu, rst_addr + 1);
+                cpu->PC = (int_addrL | (int_addrH << 8));
+                cpu->cycles += 19;
+                LOG_DEBUG("Caught mode 2 interrupt.\n");
             } else {
-                LOG_FATAL("Interrupt mode 0 and 2 are not supported yet.\n");
-                exit(1);
+                LOG_FATAL("Unknown interrupt mode.\n");
+                raise(SIGINT);
             }
         }
     }
@@ -216,7 +233,7 @@ static void cpu_doMaskableINT(cpu_t *cpu) {
 
 // Starts cpu emulation. Executes at most 'instr_limit' instructions or
 // never stops if -1 is given.
-void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
+void cpu_emulate(cpu_t *cpu, int32_t instr_limit, bool is_terminal) {
     LOG_INFO("Emulation started.\n");
 
     int32_t instr_count = 0;
@@ -260,6 +277,7 @@ void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
                 mc6850_setRDR(ch);
 
             mc6850_setStatus(mc6850_getStatus() | RX_FULL);
+            // FIXME: it's up to the peripheral overwriting a pending interrupt.
             cpu->is_pendingMI = 1;
         }
 
@@ -268,17 +286,20 @@ void cpu_emulate(cpu_t *cpu, int32_t instr_limit) {
 
         if (!(mc6850_getStatus() & TX_EMPTY)) {
             char charToPrint = mc6850_getTDR();
-            if (charToPrint == 0x0D) { // Carriage return.
-                printw("\n");
-            } else if (charToPrint == 0x0C) { // New page - Form Feed.
-                clear();
-            } else if (charToPrint == 0x0A) {
-                // Do nothing
-            } else
-                printw("%c", charToPrint);
+            if (is_terminal) {
+                if (charToPrint == 0x0D) { // Carriage return.
+                    printw("\n");
+                } else if (charToPrint == 0x0C) { // New page - Form Feed.
+                    clear();
+                } else if (charToPrint == 0x0A) {
+                    // Do nothing
+                } else {
+                    printw("%c", charToPrint);
+                }
+                refresh();
+            }
 
             mc6850_setStatus(mc6850_getStatus() | TX_EMPTY);
-            refresh();
         }
     }
 

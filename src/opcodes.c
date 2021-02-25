@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <signal.h>
 
 #include "opcodes.h"
 #include "logger.h"
@@ -15,7 +16,7 @@ typedef enum {
 
 
 // TODO: DAA is missing, pag. 173.
-// TODO: Complete IN and OUT, pag. 298.
+// TODO: Complete IN and OUT: INIR, INDR, OTIR, OTDR.
 
 
 // Returns one byte from the current PC.
@@ -267,7 +268,7 @@ static void opc_writeReg(cpu_t *cpu, uint8_t reg, uint8_t value) {
             cpu->A = value; break;
         default:
             LOG_FATAL("Cannot write to unknown register (0x%02X).\n", reg);
-            exit(1);
+            raise(SIGINT);
     }
     return;
 }
@@ -292,7 +293,7 @@ static uint8_t opc_readReg(cpu_t *cpu, uint8_t reg) {
             return cpu->A;
         default:
             LOG_FATAL("Cannot read unknown register (0x%02X).\n", reg);
-            exit(1);
+            raise(SIGINT);
     }
     return 0; // Never reached.
 }
@@ -317,7 +318,7 @@ static void opc_writeReg16(cpu_t *cpu, uint8_t reg, uint16_t value, reg16_t type
             if (type == REG16_RR) {cpu->SP = value; break;}
         default:
             LOG_FATAL("Cannot write to unknown register (0x%02X).\n", reg);
-            exit(1);
+            raise(SIGINT);
     }
     return;
 }
@@ -342,7 +343,7 @@ static uint16_t opc_readReg16(cpu_t *cpu, uint8_t reg, reg16_t type) {
             if (type == REG16_RR) return cpu->SP;
         default:
             LOG_FATAL("Cannot read unknown register (0x%02X).\n", reg);
-            exit(1);
+            raise(SIGINT);
     }
     return 0; // Never reached.
 }
@@ -367,7 +368,7 @@ static char * opc_regName8(uint8_t reg) {
             return "A";
         default:
             LOG_FATAL("Unknown register (0x%02X).\n", reg);
-            exit(1);
+            raise(SIGINT);
     }
     return ""; // Never reached.
 }
@@ -392,7 +393,7 @@ static char * opc_regName16(uint8_t reg, reg16_t type) {
             if (type == REG16_RR) return "SP";
         default:
             LOG_FATAL("Unknown register (0x%02X).\n", reg);
-            exit(1);
+            raise(SIGINT);
     }
     return ""; // Never reached.
 }
@@ -961,13 +962,13 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         else {
             LOG_FATAL("Invalid instruction in IX BIT, SET, RESET group or "
                 "in Rotate and Shift group.\n");
-            exit(1);
+            raise(SIGINT);
         }
     }
 
     else {
         LOG_FATAL("Invalid operation in 0xDD instruction group.\n");
-        exit(1);
+        raise(SIGINT);
     }
 }
 
@@ -1500,13 +1501,13 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         else {
             LOG_FATAL("Invalid instruction in IY BIT, SET, RESET group or "
                 "in Rotate and Shift group.\n");
-            exit(1);
+            raise(SIGINT);
         }
     }
 
     else {
         LOG_FATAL("Invalid operation in 0xFD instruction group.\n");
-        exit(1);
+        raise(SIGINT);
     }
 }
 
@@ -1516,7 +1517,7 @@ static void opc_LDHLr(cpu_t *cpu, uint8_t opcode) {
     uint8_t src = (opcode & 0x07);
     uint8_t data = opc_readReg(cpu, src);
     cpu_write(cpu, data, cpu->HL);
-    LOG_DEBUG("Executed LD (HL),%s HL=0x%04X\n", cpu->HL, opc_regName8(src));
+    LOG_DEBUG("Executed LD (HL),%s HL=0x%04X\n", opc_regName8(src), cpu->HL);
     return;
 }
 
@@ -2015,9 +2016,77 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
         LOG_DEBUG("Executed OUT (C),%s\n", opc_regName8(src));
     }
 
+    // INI instruction.
+    else if (next_opc == 0xA2) {
+        opc_tbl[0xED].TStates = 16;
+        uint8_t res = cpu->portIO_in(cpu->C);
+        cpu_write(cpu, res, cpu->HL);
+        cpu->B--;
+        cpu->HL++;
+
+        SET_FLAG_ADDSUB(cpu);
+        if (cpu->B)
+            RESET_FLAG_ZERO(cpu);
+        else
+            SET_FLAG_ZERO(cpu);
+
+        LOG_DEBUG("Executed INI\n");
+    }
+
+    // OUTI instruction.
+    else if (next_opc == 0xA3) {
+        opc_tbl[0xED].TStates = 16;
+        uint8_t res = cpu_read(cpu, cpu->HL);
+        cpu->portIO_out(cpu->C, res);
+        cpu->B--;
+        cpu->HL++;
+
+        SET_FLAG_ADDSUB(cpu);
+        if (cpu->B)
+            RESET_FLAG_ZERO(cpu);
+        else
+            SET_FLAG_ZERO(cpu);
+
+        LOG_DEBUG("Executed OUTI\n");
+    }
+
+    // IND instruction.
+    else if (next_opc == 0xAA) {
+        opc_tbl[0xED].TStates = 16;
+        uint8_t res = cpu->portIO_in(cpu->C);
+        cpu_write(cpu, res, cpu->HL);
+        cpu->B--;
+        cpu->HL--;
+
+        SET_FLAG_ADDSUB(cpu);
+        if (cpu->B)
+            RESET_FLAG_ZERO(cpu);
+        else
+            SET_FLAG_ZERO(cpu);
+
+        LOG_DEBUG("Executed IND\n");
+    }
+
+    // OUTD instruction.
+    else if (next_opc == 0xAB) {
+        opc_tbl[0xED].TStates = 16;
+        uint8_t res = cpu_read(cpu, cpu->HL);
+        cpu->portIO_out(cpu->C, res);
+        cpu->B--;
+        cpu->HL--;
+
+        SET_FLAG_ADDSUB(cpu);
+        if (cpu->B)
+            RESET_FLAG_ZERO(cpu);
+        else
+            SET_FLAG_ZERO(cpu);
+
+        LOG_DEBUG("Executed OUTD\n");
+    }
+
     else {
         LOG_FATAL("Invalid operation in 0xED instruction group.\n");
-        exit(1);
+        raise(SIGINT);
     }
 }
 
@@ -2652,7 +2721,7 @@ static void opc_DECHL(cpu_t *cpu, uint8_t opcode) {
 // TODO: DAA
 static void opc_DAA(cpu_t *cpu, uint8_t opcode) {
     LOG_FATAL("DAA instruction not implemented yet.");
-    exit(1);
+    raise(SIGINT);
 /*
   int top4 = (e8080.A >> 4) & 0xF;
   int bot4 = (e8080.A & 0xF);
@@ -3278,7 +3347,7 @@ static void opc_RLC(cpu_t *cpu, uint8_t opcode) {
 
     else {
         LOG_FATAL("Invalid RLC instruction.\n");
-        exit(1);
+        raise(SIGINT);
     }
 }
 
@@ -3341,7 +3410,7 @@ static void opc_JPccnn(cpu_t *cpu, uint8_t opcode) {
             break;
         default:
             LOG_FATAL("Invalid 'cc' in JP cc,nn instruction.\n");
-            exit(1);
+            raise(SIGINT);
     }
     return;
 }
@@ -3352,7 +3421,7 @@ static void opc_JRe(cpu_t *cpu, uint8_t opcode) {
     int8_t e = opc_fetch8(cpu);
     cpu->PC += e;
 
-    LOG_DEBUG("Executed JR 0x%02X\n", e);
+    LOG_DEBUG("Executed JR 0x%02hhX\n", e);
     return;
 }
 
@@ -3367,7 +3436,7 @@ static void opc_JRCe(cpu_t *cpu, uint8_t opcode) {
     else
         opc_tbl[0x38].TStates = 7;  // Condition is not met.
 
-    LOG_DEBUG("Executed JR C,0x%02X\n", e);
+    LOG_DEBUG("Executed JR C,0x%02hhX\n", e);
     return;
 }
 
@@ -3382,7 +3451,7 @@ static void opc_JRNCe(cpu_t *cpu, uint8_t opcode) {
     else
         opc_tbl[0x30].TStates = 7;  // Condition is not met.
 
-    LOG_DEBUG("Executed JR NC,0x%02X\n", e);
+    LOG_DEBUG("Executed JR NC,0x%02hhX\n", e);
     return;
 }
 
@@ -3412,7 +3481,7 @@ static void opc_JRNZe(cpu_t *cpu, uint8_t opcode) {
     else
         opc_tbl[0x20].TStates = 7;  // Condition is not met.
 
-    LOG_DEBUG("Executed JR NZ,0x%02X\n", e);
+    LOG_DEBUG("Executed JR NZ,0x%02hhX\n", e);
     return;
 }
 
@@ -3533,7 +3602,7 @@ static void opc_CALLccnn(cpu_t *cpu, uint8_t opcode) {
             break;
         default:
             LOG_FATAL("Invalid condition in CALL cc,nn instruction.\n");
-            exit(1);
+            raise(SIGINT);
     }
 }
 
@@ -3619,7 +3688,7 @@ static void opc_RETcc(cpu_t *cpu, uint8_t opcode) {
             break;
         default:
             LOG_FATAL("Invalid condition in RET cc instruction.\n");
-            exit(1);
+            raise(SIGINT);
     }
 }
 
@@ -3664,7 +3733,7 @@ static void opc_RSTp(cpu_t *cpu, uint8_t opcode) {
             break;
         default:
             LOG_FATAL("Invalid t in RST p instruction.\n");
-            exit(1);
+            raise(SIGINT);
     }
 }
 

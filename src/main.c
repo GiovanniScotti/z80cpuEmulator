@@ -21,6 +21,7 @@
 static bool is_terminal = false;
 static cpu_t z80;
 
+
 // Exit handler in case SIGINT is received.
 static void exitHandler(int sigNumber) {
     logger_close();
@@ -144,13 +145,8 @@ int main(int argc, char **argv) {
         }
     } else {
         LOG_FATAL("Cannot initialize memory structures.");
-        exit(1);
+        raise(SIGINT);
     }
-
-
-    // TODO: how can we deallocate memory? raise() instead of exit and
-    // cpu_destroy in exit handler?
-
 
     // Memory configuration:
     // 0x0000 - 0x7FFF -> ROM
@@ -161,8 +157,7 @@ int main(int argc, char **argv) {
     // CPU initialization.
     if (cpu_init(&z80, &rom)) {
         LOG_FATAL("Cannot initialize the cpu.\n");
-        cpu_destroy(&z80);
-        exit(1);
+        raise(SIGINT);
     }
 
     // Hooks up the ACIA.
@@ -171,12 +166,11 @@ int main(int argc, char **argv) {
     z80.portIO_out = mc6850_cpuIn;
 
     // Emulation.
-    cpu_emulate(&z80, -1);
+    cpu_emulate(&z80, -1, is_terminal);
 
     // Termination.
     cpu_destroy(&z80);
     logger_close();
-
     if (is_terminal)
         endwin();
 

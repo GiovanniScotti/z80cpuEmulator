@@ -148,6 +148,8 @@ typedef struct {
     // is_pendingNMI is set when the pending interrupt is a NMI.
     bool is_pendingMI;
     bool is_pendingNMI;
+    // Byte from the interrupting device (see mode 0 and 2).
+    uint8_t int_data;
 
     // IO.
     uint8_t (*portIO_in) (uint8_t port);
@@ -162,7 +164,7 @@ uint8_t cpu_read(cpu_t *cpu, const uint16_t addr);
 void cpu_write(cpu_t *cpu, const uint8_t data, const uint16_t addr);
 void cpu_stackPush(cpu_t *cpu, uint16_t data);
 uint16_t cpu_stackPop(cpu_t *cpu);
-void cpu_emulate(cpu_t *cpu, int32_t instr_limit);
+void cpu_emulate(cpu_t *cpu, int32_t instr_limit, bool is_terminal);
 
 void cpu_printChunk(mem_chunk_t *chunk);
 void cpu_dumpRegisters(cpu_t *cpu);

@@ -9,7 +9,6 @@ SRCDIR  = ./src
 HDRDIR  = ./hdr
 SOURCES = $(SRCDIR)/main.c $(SRCDIR)/logger.c $(SRCDIR)/hex2array.c \
 		  $(SRCDIR)/cpu.c $(SRCDIR)/opcodes.c $(SRCDIR)/mc6850.c
-		  #$(SRCDIR)/debug.c $(SRCDIR)/roms.c \
 
 OBJECTS = $(SOURCES:.c=.o)
 
