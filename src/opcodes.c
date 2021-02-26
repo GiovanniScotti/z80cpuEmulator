@@ -14,6 +14,11 @@ typedef enum {
     REG16_RR = 3
 } reg16_t;
 
+typedef enum {
+    IS_ADD = 0,
+    IS_SUB = 1
+} op_t;
+
 
 // TODO: DAA is missing, pag. 173.
 // TODO: Complete IN and OUT: INIR, INDR, OTIR, OTDR.
@@ -89,26 +94,24 @@ static void opc_testZFlag16(cpu_t *cpu, uint16_t val) {
 
 // Tests if the given 8-bit operands generate an half carry and sets the cpu
 // status register (H flag) accordingly. Note that an extra argument specifies
-// the operation on the two operands. If operands are A and B:
-// - simple addition: op1 = A, op2 = B, isSub = false.
-// - simple subtraction: op1 = A, op2 = ~B + 1, isSub = true.
-// - addition w/carry: op1 = A, op2 = B, isSub = false.
-// - subtraction w/carry: op1 = A, op2 = ~B, isSub = true.
+// the operation on the two operands.
 static void opc_testHFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
-    uint8_t c, bool isSub) {
+    uint8_t c, op_t type) {
 
-    uint8_t carryHalf = (((op1 & 0xF) + (op2 & 0xF) + (c & 0xF)) & 0x10);
+    uint8_t ch = (((op1 & 0xF) + (op2 & 0xF) + (c & 0xF)) & 0x10);
 
-    if (!isSub) {
-        if (carryHalf)
-            SET_FLAG_HCARRY(cpu);
-        else
-            RESET_FLAG_HCARRY(cpu);
-    } else {
-        if (carryHalf)
-            RESET_FLAG_HCARRY(cpu);
-        else
-            SET_FLAG_HCARRY(cpu);
+    switch (type) {
+        case IS_ADD:
+            if (ch) SET_FLAG_HCARRY(cpu);
+            else RESET_FLAG_HCARRY(cpu);
+            break;
+        case IS_SUB:
+            if (ch) RESET_FLAG_HCARRY(cpu);
+            else SET_FLAG_HCARRY(cpu);
+            break;
+        default:
+            LOG_FATAL("Invalid operation type.\n");
+            raise(SIGINT);
     }
     return;
 }
@@ -116,26 +119,24 @@ static void opc_testHFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
 
 // Tests if the given 16-bit operands generate an half carry and sets the cpu
 // status register (H flag) accordingly. Note that an extra argument specifies
-// the operation on the two operands. If operands are A and B:
-// - simple addition: op1 = A, op2 = B, isSub = false.
-// - simple subtraction: op1 = A, op2 = ~B + 1, isSub = true.
-// - addition w/carry: op1 = A, op2 = B, isSub = false.
-// - subtraction w/carry: op1 = A, op2 = ~B, isSub = true.
+// the operation on the two operands.
 static void opc_testHFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2,
-    uint16_t c, bool isSub) {
+    uint8_t c, op_t type) {
 
-    uint16_t carryHalf = (((op1 & 0xFFF) + (op2 & 0xFFF) + (c & 0xFFF)) & 0x1000);
+    uint16_t ch = (((op1 & 0xFFF) + (op2 & 0xFFF) + (c & 0xFFF)) & 0x1000);
 
-    if (!isSub) {
-        if (carryHalf)
-            SET_FLAG_HCARRY(cpu);
-        else
-            RESET_FLAG_HCARRY(cpu);
-    } else {
-        if (carryHalf)
-            RESET_FLAG_HCARRY(cpu);
-        else
-            SET_FLAG_HCARRY(cpu);
+    switch (type) {
+        case IS_ADD:
+            if (ch) SET_FLAG_HCARRY(cpu);
+            else RESET_FLAG_HCARRY(cpu);
+            break;
+        case IS_SUB:
+            if (ch) RESET_FLAG_HCARRY(cpu);
+            else SET_FLAG_HCARRY(cpu);
+            break;
+        default:
+            LOG_FATAL("Invalid operation type.\n");
+            raise(SIGINT);
     }
     return;
 }
@@ -183,10 +184,8 @@ static void opc_testPFlag8(cpu_t *cpu, uint8_t val) {
         val = val >> 1;
     }
 
-    if (set_bits & 0x1)
-        RESET_FLAG_PARITY(cpu); // Odd.
-    else
-        SET_FLAG_PARITY(cpu); // Even.
+    if (set_bits % 2) RESET_FLAG_PARITY(cpu); // Odd.
+    else SET_FLAG_PARITY(cpu); // Even.
     return;
 }
 
@@ -198,19 +197,22 @@ static void opc_testPFlag8(cpu_t *cpu, uint8_t val) {
 // - addition w/carry: op1 = A, op2 = B, c = carry, isSub = false.
 // - subtraction w/carry: op1 = A, op2 = ~B, c = !carry, isSub = true.
 static void opc_testCFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
-    uint8_t c, bool isSub) {
+    uint8_t c, op_t type) {
 
-    uint8_t carryOut = (op1 > 0xFF - op2 - c);
-    if (!isSub) {
-        if (carryOut)
-            SET_FLAG_CARRY(cpu);
-        else
-            RESET_FLAG_CARRY(cpu);
-    } else {
-        if (carryOut)
-            RESET_FLAG_CARRY(cpu);
-        else
-            SET_FLAG_CARRY(cpu);
+    uint8_t carry = (op1 > 0xFF - op2 - c);
+
+    switch (type) {
+        case IS_ADD:
+            if (carry) SET_FLAG_CARRY(cpu);
+            else RESET_FLAG_CARRY(cpu);
+            break;
+        case IS_SUB:
+            if (carry) RESET_FLAG_CARRY(cpu);
+            else SET_FLAG_CARRY(cpu);
+            break;
+        default:
+            LOG_FATAL("Invalid operation type.\n");
+            raise(SIGINT);
     }
     return;
 }
@@ -223,20 +225,65 @@ static void opc_testCFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
 // - addition w/carry: op1 = A, op2 = B, c = carry, isSub = false.
 // - subtraction w/carry: op1 = A, op2 = ~B, c = !carry, isSub = true.
 static void opc_testCFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2,
-    uint8_t c, bool isSub) {
+    uint8_t c, op_t type) {
 
-    uint16_t carryOut = (op1 > 0xFFFF - op2 - c);
-    if (!isSub) {
-        if (carryOut)
-            SET_FLAG_CARRY(cpu);
-        else
-            RESET_FLAG_CARRY(cpu);
-    } else {
-        if (carryOut)
-            RESET_FLAG_CARRY(cpu);
-        else
-            SET_FLAG_CARRY(cpu);
+    uint16_t carry = (op1 > 0xFFFF - op2 - c);
+
+    switch (type) {
+        case IS_ADD:
+            if (carry) SET_FLAG_CARRY(cpu);
+            else RESET_FLAG_CARRY(cpu);
+            break;
+        case IS_SUB:
+            if (carry) RESET_FLAG_CARRY(cpu);
+            else SET_FLAG_CARRY(cpu);
+            break;
+        default:
+            LOG_FATAL("Invalid operation type.\n");
+            raise(SIGINT);
     }
+    return;
+}
+
+
+// General purpose update flags function that works for 8-bit ADDs and ADCs.
+static void opc_setFlagsAdd8(cpu_t *cpu, uint8_t op1, uint8_t op2,
+    uint8_t c, uint8_t res) {
+
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, op1, op2, c, IS_ADD);
+    opc_testVFlag8(cpu, op1, op2, c);
+    RESET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, op1, op2, c, IS_ADD);
+    return;
+}
+
+
+// General purpose update flags function that works for 16-bit ADDs and ADCs.
+static void opc_setFlagsAdd16(cpu_t *cpu, uint16_t op1, uint16_t op2,
+    uint8_t c, uint16_t res) {
+
+    opc_testSFlag16(cpu, res);
+    opc_testZFlag16(cpu, res);
+    opc_testHFlag16(cpu, op1, op2, c, IS_ADD);
+    opc_testVFlag16(cpu, op1, op2, c);
+    RESET_FLAG_ADDSUB(cpu);
+    opc_testCFlag16(cpu, op1, op2, c, IS_ADD);
+    return;
+}
+
+
+// General purpose update flags function that works for 8-bit SUBs and SBCs.
+static void opc_setFlagsSub8(cpu_t *cpu, uint8_t op1, uint8_t op2,
+    uint8_t c, uint8_t res) {
+
+    opc_testSFlag8(cpu, res);
+    opc_testZFlag8(cpu, res);
+    opc_testHFlag8(cpu, op1, op2, c, IS_SUB);
+    opc_testVFlag8(cpu, op1, op2, c);
+    SET_FLAG_ADDSUB(cpu);
+    opc_testCFlag8(cpu, op1, op2, c, IS_SUB);
     return;
 }
 
@@ -527,12 +574,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         uint8_t data = cpu_read(cpu, addr);
         uint8_t res = cpu->A + data;
 
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, 0, 0);
-        opc_testVFlag8(cpu, cpu->A, data, 0);
-        RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, data, 0, 0);
+        opc_setFlagsAdd8(cpu, cpu->A, data, 0, res);
 
         cpu->A = res;
         LOG_DEBUG("Executed ADD A,(IX+d) IX+d=0x%04X\n", addr);
@@ -546,12 +588,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         uint8_t c = GET_FLAG_CARRY(cpu);
         uint8_t res = cpu->A + data + c;
 
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, c, 0);
-        opc_testVFlag8(cpu, cpu->A, data, c);
-        RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, data, c, 0);
+        opc_setFlagsAdd8(cpu, cpu->A, data, c, res);
 
         cpu->A = res;
         LOG_DEBUG("Executed ADC A,(IX+d) IX+d=0x%04X\n", addr);
@@ -564,12 +601,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         uint8_t data = cpu_read(cpu, addr);
         uint8_t res = cpu->A - data;
 
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, 1);
-        SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+        opc_setFlagsSub8(cpu, cpu->A, ~data, 1, res);
 
         cpu->A = res;
         LOG_DEBUG("Executed SUB A,(IX+d) IX+d=0x%04X\n", addr);
@@ -584,12 +616,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         uint8_t res = cpu->A - data - c;
 
         // A - B - C = A + ~B + !C
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, ~data, !c, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, !c);
-        SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
+        opc_setFlagsSub8(cpu, cpu->A, ~data, !c, res);
 
         cpu->A = res;
         LOG_DEBUG("Executed SBC A,(IX+d) IX+d=0x%04X\n", addr);
@@ -656,12 +683,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         uint8_t data = cpu_read(cpu, addr);
         uint8_t res = cpu->A - data;
 
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, 1);
-        SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+        opc_setFlagsSub8(cpu, cpu->A, ~data, 1, res);
 
         LOG_DEBUG("Executed CP (IX+d) IX+d=0x%04X\n", addr);
     }
@@ -676,7 +698,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, 1, 0, 0);
+        opc_testHFlag8(cpu, data, 1, 0, IS_ADD);
         RESET_FLAG_ADDSUB(cpu);
 
         if (data == 0x7F)
@@ -698,7 +720,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, (~1 + 1), 0, 1);
+        opc_testHFlag8(cpu, data, ~1, 1, IS_SUB);
         SET_FLAG_ADDSUB(cpu);
 
         if (data == 0x80)
@@ -717,9 +739,9 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         uint16_t data = opc_readReg16(cpu, src, REG16_PP);
         uint16_t res = cpu->IX + data;
 
-        opc_testHFlag16(cpu, cpu->IX, data, 0, 0);
+        opc_testHFlag16(cpu, cpu->IX, data, 0, IS_ADD);
         RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag16(cpu, cpu->IX, data, 0, 0);
+        opc_testCFlag16(cpu, cpu->IX, data, 0, IS_ADD);
 
         cpu->IX = res;
         LOG_DEBUG("Executed ADD IX,%s\n", opc_regName16(src, REG16_PP));
@@ -729,7 +751,6 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0x23) {
         opc_tbl[0xDD].TStates = 10;
         cpu->IX++;
-
         LOG_DEBUG("Executed INC IX\n");
     }
 
@@ -737,7 +758,6 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0x2B) {
         opc_tbl[0xDD].TStates = 10;
         cpu->IX--;
-
         LOG_DEBUG("Executed DEC IX\n");
     }
 
@@ -745,7 +765,6 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0xE9) {
         opc_tbl[0xDD].TStates = 8;
         cpu->PC = cpu->IX;
-
         LOG_DEBUG("Executed JP (IX) IX=0x%04X\n", cpu->IX);
     }
 
@@ -796,7 +815,6 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
             uint8_t bit = ((controlByte >> 3) & 0x07);
             uint8_t data = cpu_read(cpu, addr);
             uint8_t res = data | (1 << bit);
-
             cpu_write(cpu, res, addr);
             LOG_DEBUG("Executed SET %d,(IX+d) IX+d=0x%04X\n", bit, addr);
         }
@@ -807,7 +825,6 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
             uint8_t bit = ((controlByte >> 3) & 0x07);
             uint8_t data = cpu_read(cpu, addr);
             uint8_t res = data & ~(1 << bit);
-
             cpu_write(cpu, res, addr);
             LOG_DEBUG("Executed RES %d,(IX+d) IX+d=0x%04X\n", bit, addr);
         }
@@ -1066,12 +1083,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         uint8_t data = cpu_read(cpu, addr);
         uint8_t res = cpu->A + data;
 
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, 0, 0);
-        opc_testVFlag8(cpu, cpu->A, data, 0);
-        RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, data, 0, 0);
+        opc_setFlagsAdd8(cpu, cpu->A, data, 0, res);
 
         cpu->A = res;
         LOG_DEBUG("Executed ADD A,(IY+d) IY+d=0x%04X\n", addr);
@@ -1085,12 +1097,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         uint8_t c = GET_FLAG_CARRY(cpu);
         uint8_t res = cpu->A + data + c;
 
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, c, 0);
-        opc_testVFlag8(cpu, cpu->A, data, c);
-        RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, data, c, 0);
+        opc_setFlagsAdd8(cpu, cpu->A, data, c, res);
 
         cpu->A = res;
         LOG_DEBUG("Executed ADC A,(IY+d) IY+d=0x%04X\n", addr);
@@ -1103,12 +1110,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         uint8_t data = cpu_read(cpu, addr);
         uint8_t res = cpu->A - data;
 
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, 1);
-        SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+        opc_setFlagsSub8(cpu, cpu->A, ~data, 1, res);
 
         cpu->A = res;
         LOG_DEBUG("Executed SUB A,(IY+d) IY+d=0x%04X\n", addr);
@@ -1123,12 +1125,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         uint8_t res = cpu->A - data - c;
 
         // A - B - C = A + ~B + !C
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, ~data, !c, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, !c);
-        SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
+        opc_setFlagsSub8(cpu, cpu->A, ~data, !c, res);
 
         cpu->A = res;
         LOG_DEBUG("Executed SBC A,(IY+d) IY+d=0x%04X\n", addr);
@@ -1195,12 +1192,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         uint8_t data = cpu_read(cpu, addr);
         uint8_t res = cpu->A - data;
 
-        opc_testSFlag8(cpu, res);
-        opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, 1);
-        SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+        opc_setFlagsSub8(cpu, cpu->A, ~data, 1, res);
 
         LOG_DEBUG("Executed CP (IY+d) IY+d=0x%04X\n", addr);
     }
@@ -1256,9 +1248,9 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         uint16_t data = opc_readReg16(cpu, src, REG16_RR);
         uint16_t res = cpu->IY + data;
 
-        opc_testHFlag16(cpu, cpu->IY, data, 0, 0);
+        opc_testHFlag16(cpu, cpu->IY, data, 0, IS_ADD);
         RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag16(cpu, cpu->IY, data, 0, 0);
+        opc_testCFlag16(cpu, cpu->IY, data, 0, IS_ADD);
 
         cpu->IY = res;
         LOG_DEBUG("Executed ADD IY,%s\n", opc_regName16(src, REG16_RR));
@@ -1268,7 +1260,6 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0x23) {
         opc_tbl[0xFD].TStates = 10;
         cpu->IY++;
-
         LOG_DEBUG("Executed INC IY\n");
     }
 
@@ -1276,7 +1267,6 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0x2B) {
         opc_tbl[0xFD].TStates = 10;
         cpu->IY--;
-
         LOG_DEBUG("Executed DEC IY\n");
     }
 
@@ -1284,7 +1274,6 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0xE9) {
         opc_tbl[0xFD].TStates = 8;
         cpu->PC = cpu->IY;
-
         LOG_DEBUG("Executed JP (IY) IY=0x%04X\n", cpu->IY);
     }
 
@@ -1335,7 +1324,6 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
             uint8_t bit = ((controlByte >> 3) & 0x07);
             uint8_t data = cpu_read(cpu, addr);
             uint8_t res = data | (1 << bit);
-
             cpu_write(cpu, res, addr);
             LOG_DEBUG("Executed SET %d,(IY+d) IY+d=0x%04X\n", bit, addr);
         }
@@ -1346,7 +1334,6 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
             uint8_t bit = ((controlByte >> 3) & 0x07);
             uint8_t data = cpu_read(cpu, addr);
             uint8_t res = data & ~(1 << bit);
-
             cpu_write(cpu, res, addr);
             LOG_DEBUG("Executed RES %d,(IY+d) IY+d=0x%04X\n", bit, addr);
         }
@@ -1753,7 +1740,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), 0, 1);
+        opc_testHFlag8(cpu, cpu->A, ~data_HL, 1, IS_SUB);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1773,7 +1760,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), 0, 1);
+        opc_testHFlag8(cpu, cpu->A, ~data_HL, 1, IS_SUB);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1802,7 +1789,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), 0, 1);
+        opc_testHFlag8(cpu, cpu->A, ~data_HL, 1, IS_SUB);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1822,7 +1809,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), 0, 1);
+        opc_testHFlag8(cpu, cpu->A, ~data_HL, 1, IS_SUB);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1848,7 +1835,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, 0, (~cpu->A + 1), 0, 1);
+        opc_testHFlag8(cpu, 0, ~cpu->A, 1, IS_SUB);
         SET_FLAG_ADDSUB(cpu);
 
         if (cpu->A == 0x80)
@@ -1869,7 +1856,6 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0x46) {
         opc_tbl[0xED].TStates = 8;
         cpu->IM = 0;
-
         LOG_DEBUG("Executed IM 0\n");
     }
 
@@ -1877,7 +1863,6 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0x56) {
         opc_tbl[0xED].TStates = 8;
         cpu->IM = 1;
-
         LOG_DEBUG("Executed IM 1\n");
     }
 
@@ -1885,7 +1870,6 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0x5E) {
         opc_tbl[0xED].TStates = 8;
         cpu->IM = 2;
-
         LOG_DEBUG("Executed IM 2\n");
     }
 
@@ -1897,12 +1881,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
         uint8_t c = GET_FLAG_CARRY(cpu);
         uint16_t res = cpu->HL + data + c;
 
-        opc_testSFlag16(cpu, res);
-        opc_testZFlag16(cpu, res);
-        opc_testHFlag16(cpu, cpu->HL, data, c, 0);
-        opc_testVFlag16(cpu, cpu->HL, data, c);
-        RESET_FLAG_ADDSUB(cpu);
-        opc_testCFlag16(cpu, cpu->HL, data, c, 0);
+        opc_setFlagsAdd16(cpu, cpu->HL, data, c, res);
 
         cpu->HL = res;
         LOG_DEBUG("Executed ADC HL,%s\n", opc_regName16(src, REG16_DD));
@@ -1932,7 +1911,6 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0x4D) {
         opc_tbl[0xED].TStates = 14;
         cpu->PC = cpu_stackPop(cpu);
-
         LOG_DEBUG("Executed RETI\n");
     }
 
@@ -1941,7 +1919,6 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
         opc_tbl[0xED].TStates = 14;
         cpu->IFF1 = cpu->IFF2;
         cpu->PC = cpu_stackPop(cpu);
-
         LOG_DEBUG("Executed RETN\n");
     }
 
@@ -2188,12 +2165,7 @@ static void opc_ADDAr(cpu_t *cpu, uint8_t opcode) {
     uint8_t data = opc_readReg(cpu, src);
     uint8_t res = cpu->A + data;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, 0, 0);
-    opc_testVFlag8(cpu, cpu->A, data, 0);
-    RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, data, 0, 0);
+    opc_setFlagsAdd8(cpu, cpu->A, data, 0, res);
 
     cpu->A = res;
     LOG_DEBUG("Executed ADD A,%s\n", opc_regName8(src));
@@ -2207,12 +2179,7 @@ static void opc_SUBAr(cpu_t *cpu, uint8_t opcode) {
     uint8_t data = opc_readReg(cpu, src);
     uint8_t res = cpu->A - data;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, 1);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~data, 1, res);
 
     cpu->A = res;
     LOG_DEBUG("Executed SUB A,%s\n", opc_regName8(src));
@@ -2225,15 +2192,10 @@ static void opc_ADDAn(cpu_t *cpu, uint8_t opcode) {
     uint8_t n = opc_fetch8(cpu);
     uint8_t res = cpu->A + n;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, n, 0, 0);
-    opc_testVFlag8(cpu, cpu->A, n, 0);
-    RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, n, 0, 0);
+    opc_setFlagsAdd8(cpu, cpu->A, n, 0, res);
 
     cpu->A = res;
-    LOG_DEBUG("Executed ADD A,0x%02X\n", n);
+    LOG_DEBUG("Executed ADD A,0x%02hhX\n", n);
     return;
 }
 
@@ -2243,15 +2205,10 @@ static void opc_SUBAn(cpu_t *cpu, uint8_t opcode) {
     uint8_t n = opc_fetch8(cpu);
     uint8_t res = cpu->A - n;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~n + 1), 0, 1);
-    opc_testVFlag8(cpu, cpu->A, ~n, 1);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, (~n + 1), 0, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~n, 1, res);
 
     cpu->A = res;
-    LOG_DEBUG("Executed SUB A,0x%02X\n", n);
+    LOG_DEBUG("Executed SUB A,0x%02hhX\n", n);
     return;
 }
 
@@ -2261,12 +2218,7 @@ static void opc_ADDAHL(cpu_t *cpu, uint8_t opcode) {
     uint8_t data = cpu_read(cpu, cpu->HL);
     uint8_t res = cpu->A + data;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, 0, 0);
-    opc_testVFlag8(cpu, cpu->A, data, 0);
-    RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, data, 0, 0);
+    opc_setFlagsAdd8(cpu, cpu->A, data, 0, res);
 
     cpu->A = res;
     LOG_DEBUG("Executed ADD A,(HL) HL=0x%04X\n", cpu->HL);
@@ -2279,12 +2231,7 @@ static void opc_SUBAHL(cpu_t *cpu, uint8_t opcode) {
     uint8_t data = cpu_read(cpu, cpu->HL);
     uint8_t res = cpu->A - data;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, 1);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~data, 1, res);
 
     cpu->A = res;
     LOG_DEBUG("Executed SUB A,(HL) HL=0x%04X\n", cpu->HL);
@@ -2299,12 +2246,7 @@ static void opc_ADCAr(cpu_t *cpu, uint8_t opcode) {
     uint8_t c = GET_FLAG_CARRY(cpu);
     uint8_t res = cpu->A + data + c;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, c, 0);
-    opc_testVFlag8(cpu, cpu->A, data, c);
-    RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, data, c, 0);
+    opc_setFlagsAdd8(cpu, cpu->A, data, c, res);
 
     cpu->A = res;
     LOG_DEBUG("Executed ADC A,%s\n", opc_regName8(src));
@@ -2320,12 +2262,7 @@ static void opc_SBCAr(cpu_t *cpu, uint8_t opcode) {
     uint8_t res = cpu->A - data - c;
 
     // A - B - C = A + ~B + !C
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, ~data, !c, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, !c);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~data, !c, res);
 
     cpu->A = res;
     LOG_DEBUG("Executed SBC A,%s\n", opc_regName8(src));
@@ -2339,15 +2276,10 @@ static void opc_ADCAn(cpu_t *cpu, uint8_t opcode) {
     uint8_t c = GET_FLAG_CARRY(cpu);
     uint8_t res = cpu->A + n + c;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, n, c, 0);
-    opc_testVFlag8(cpu, cpu->A, n, c);
-    RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, n, c, 0);
+    opc_setFlagsAdd8(cpu, cpu->A, n, c, res);
 
     cpu->A = res;
-    LOG_DEBUG("Executed ADC A,0x%02X\n", n);
+    LOG_DEBUG("Executed ADC A,0x%02hhX\n", n);
     return;
 }
 
@@ -2359,15 +2291,10 @@ static void opc_SBCAn(cpu_t *cpu, uint8_t opcode) {
     uint8_t res = cpu->A - n - c;
 
     // A - B - C = A + ~B + !C
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, ~n, !c, 1);
-    opc_testVFlag8(cpu, cpu->A, ~n, !c);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, ~n, !c, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~n, !c, res);
 
     cpu->A = res;
-    LOG_DEBUG("Executed SBC A,0x%02X\n", n);
+    LOG_DEBUG("Executed SBC A,0x%02hhX\n", n);
     return;
 }
 
@@ -2378,12 +2305,7 @@ static void opc_ADCAHL(cpu_t *cpu, uint8_t opcode) {
     uint8_t c = GET_FLAG_CARRY(cpu);
     uint8_t res = cpu->A + data + c;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, c, 0);
-    opc_testVFlag8(cpu, cpu->A, data, c);
-    RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, data, c, 0);
+    opc_setFlagsAdd8(cpu, cpu->A, data, c, res);
 
     cpu->A = res;
     LOG_DEBUG("Executed ADC A,(HL) HL=0x%04X\n", cpu->HL);
@@ -2398,12 +2320,7 @@ static void opc_SBCAHL(cpu_t *cpu, uint8_t opcode) {
     uint8_t res = cpu->A - data - c;
 
     // A - B - C = A + ~B + !C
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, ~data, !c, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, !c);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~data, !c, res);
 
     cpu->A = res;
     LOG_DEBUG("Executed SBC A,(HL) HL=0x%04X\n", cpu->HL);
@@ -2443,7 +2360,7 @@ static void opc_ANDn(cpu_t *cpu, uint8_t opcode) {
     RESET_FLAG_CARRY(cpu);
 
     cpu->A = res;
-    LOG_DEBUG("Executed AND 0x%02X\n", n);
+    LOG_DEBUG("Executed AND 0x%02hhX\n", n);
     return;
 }
 
@@ -2498,7 +2415,7 @@ static void opc_ORn(cpu_t *cpu, uint8_t opcode) {
     RESET_FLAG_CARRY(cpu);
 
     cpu->A = res;
-    LOG_DEBUG("Executed OR 0x%02X\n", n);
+    LOG_DEBUG("Executed OR 0x%02hhX\n", n);
     return;
 }
 
@@ -2553,7 +2470,7 @@ static void opc_XORn(cpu_t *cpu, uint8_t opcode) {
     RESET_FLAG_CARRY(cpu);
 
     cpu->A = res;
-    LOG_DEBUG("Executed XOR 0x%02X\n", n);
+    LOG_DEBUG("Executed XOR 0x%02hhX\n", n);
     return;
 }
 
@@ -2582,12 +2499,7 @@ static void opc_CPr(cpu_t *cpu, uint8_t opcode) {
     uint8_t data = cpu_read(cpu, src);
     uint8_t res = cpu->A - data;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, 1);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~data, 1, res);
 
     LOG_DEBUG("Executed CP %s\n", opc_regName8(src));
     return;
@@ -2599,12 +2511,7 @@ static void opc_CPn(cpu_t *cpu, uint8_t opcode) {
     uint8_t n = opc_fetch8(cpu);
     uint8_t res = cpu->A - n;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~n + 1), 0, 1);
-    opc_testVFlag8(cpu, cpu->A, ~n, 1);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, (~n + 1), 0, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~n, 1, res);
 
     LOG_DEBUG("Executed CP 0x%02X\n", n);
     return;
@@ -2616,12 +2523,7 @@ static void opc_CPHL(cpu_t *cpu, uint8_t opcode) {
     uint8_t data = cpu_read(cpu, cpu->HL);
     uint8_t res = cpu->A - data;
 
-    opc_testSFlag8(cpu, res);
-    opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, 1);
-    SET_FLAG_ADDSUB(cpu);
-    opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+    opc_setFlagsSub8(cpu, cpu->A, ~data, 1, res);
 
     LOG_DEBUG("Executed CP (HL) HL=0x%04X\n", cpu->HL);
     return;
@@ -2636,7 +2538,7 @@ static void opc_INCr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, 1, 0, 0);
+    opc_testHFlag8(cpu, data, 1, 0, IS_ADD);
     RESET_FLAG_ADDSUB(cpu);
 
     if (data == 0x7F)
@@ -2657,7 +2559,7 @@ static void opc_INCHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, 1, 0, 0);
+    opc_testHFlag8(cpu, data, 1, 0, IS_ADD);
     RESET_FLAG_ADDSUB(cpu);
 
     if (data == 0x7F)
@@ -2679,7 +2581,7 @@ static void opc_DECr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, (~1 + 1), 0, 1);
+    opc_testHFlag8(cpu, data, ~1, 1, IS_SUB);
     SET_FLAG_ADDSUB(cpu);
 
     if (data == 0x80)
@@ -2700,7 +2602,7 @@ static void opc_DECHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, (~1 + 1), 0, 1);
+    opc_testHFlag8(cpu, data, ~1, 1, IS_SUB);
     SET_FLAG_ADDSUB(cpu);
 
     if (data == 0x80)
@@ -2716,24 +2618,9 @@ static void opc_DECHL(cpu_t *cpu, uint8_t opcode) {
 
 // TODO: DAA
 static void opc_DAA(cpu_t *cpu, uint8_t opcode) {
-    LOG_FATAL("DAA instruction not implemented yet.");
+    LOG_FATAL("DAA instruction not implemented yet.\n");
     raise(SIGINT);
-/*
-  int top4 = (e8080.A >> 4) & 0xF;
-  int bot4 = (e8080.A & 0xF);
-
-  if ((bot4 > 9) || (e8080.F & FLAG_ACARRY)) {
-    setFlags(e8080.A + 6, FLAG_ZERO | FLAG_SIGN | FLAG_PARITY | FLAG_CARRY | FLAG_ACARRY);
-    e8080.A += 6;
-    top4 = (e8080.A >> 4) & 0xF;
-    bot4 = (e8080.A & 0xF);
-  }
-
-  if ((top4 > 9) || (e8080.F & FLAG_CARRY)) {
-    top4 += 6;
-    e8080.A = (top4 << 4) | bot4;
-  }
-*/
+    return;
 }
 
 
@@ -2782,7 +2669,6 @@ static void opc_SCF(cpu_t *cpu, uint8_t opcode) {
 // NOP instruction.
 static void opc_NOP(cpu_t *cpu, uint8_t opcode) {
     /* Does nothing */
-
     LOG_DEBUG("Executed NOP\n");
     return;
 }
@@ -2791,7 +2677,6 @@ static void opc_NOP(cpu_t *cpu, uint8_t opcode) {
 // HALT instruction.
 static void opc_HALT(cpu_t *cpu, uint8_t opcode) {
     cpu->halt = 1;
-
     LOG_DEBUG("Executed HALT\n");
     return;
 }
@@ -2801,7 +2686,6 @@ static void opc_HALT(cpu_t *cpu, uint8_t opcode) {
 static void opc_DI(cpu_t *cpu, uint8_t opcode) {
     cpu->IFF1 = 0;
     cpu->IFF2 = 0;
-
     LOG_DEBUG("Executed DI\n");
     return;
 }
@@ -2811,7 +2695,6 @@ static void opc_DI(cpu_t *cpu, uint8_t opcode) {
 static void opc_EI(cpu_t *cpu, uint8_t opcode) {
     cpu->IFF1 = 1;
     cpu->IFF2 = 1;
-
     LOG_DEBUG("Executed EI\n");
     return;
 }
@@ -2823,9 +2706,9 @@ static void opc_ADDHLss(cpu_t *cpu, uint8_t opcode) {
     uint16_t data = opc_readReg16(cpu, src, REG16_DD);
     uint16_t res = cpu->HL + data;
 
-    opc_testHFlag16(cpu, cpu->HL, data, 0, 0);
+    opc_testHFlag16(cpu, cpu->HL, data, 0, IS_ADD);
     RESET_FLAG_ADDSUB(cpu);
-    opc_testCFlag16(cpu, cpu->HL, data, 0, 0);
+    opc_testCFlag16(cpu, cpu->HL, data, 0, IS_ADD);
 
     cpu->HL = res;
     LOG_DEBUG("Executed ADD HL,%s\n", opc_regName16(src, REG16_DD));
@@ -3017,7 +2900,6 @@ static void opc_RLC(cpu_t *cpu, uint8_t opcode) {
         uint8_t src = (next_opc & 0x07);
         uint8_t data = opc_readReg(cpu, src);
         uint8_t res = data | (1 << bit);
-
         opc_writeReg(cpu, src, res);
         LOG_DEBUG("Executed SET %d,%s\n", bit, opc_regName8(src));
     }
@@ -3028,7 +2910,6 @@ static void opc_RLC(cpu_t *cpu, uint8_t opcode) {
         uint8_t bit = ((next_opc >> 3) & 0x07);
         uint8_t data = cpu_read(cpu, cpu->HL);
         uint8_t res = data | (1 << bit);
-
         cpu_write(cpu, res, cpu->HL);
         LOG_DEBUG("Executed SET %d,(HL) HL=0x%04X\n", bit, cpu->HL);
     }
@@ -3039,7 +2920,6 @@ static void opc_RLC(cpu_t *cpu, uint8_t opcode) {
         uint8_t src = (next_opc & 0x07);
         uint8_t data = opc_readReg(cpu, src);
         uint8_t res = data & ~(1 << bit);
-
         opc_writeReg(cpu, src, res);
         LOG_DEBUG("Executed RES %d,%s\n", bit, opc_regName8(src));
     }
@@ -3050,7 +2930,6 @@ static void opc_RLC(cpu_t *cpu, uint8_t opcode) {
         uint8_t bit = ((next_opc >> 3) & 0x07);
         uint8_t data = cpu_read(cpu, cpu->HL);
         uint8_t res = data & ~(1 << bit);
-
         cpu_write(cpu, res, cpu->HL);
         LOG_DEBUG("Executed RES %d,(HL) HL=0x%04X\n", bit, cpu->HL);
     }
@@ -3352,7 +3231,6 @@ static void opc_RLC(cpu_t *cpu, uint8_t opcode) {
 static void opc_JPnn(cpu_t *cpu, uint8_t opcode) {
     uint16_t addr = opc_fetch16(cpu);
     cpu->PC = addr;
-
     LOG_DEBUG("Executed JP 0x%04X\n", addr);
     return;
 }
@@ -3414,9 +3292,8 @@ static void opc_JPccnn(cpu_t *cpu, uint8_t opcode) {
 
 // JR e instruction.
 static void opc_JRe(cpu_t *cpu, uint8_t opcode) {
-    int8_t e = opc_fetch8(cpu);
+    int8_t e = (int8_t)opc_fetch8(cpu);
     cpu->PC += e;
-
     LOG_DEBUG("Executed JR 0x%02hhX\n", e);
     return;
 }
@@ -3425,7 +3302,7 @@ static void opc_JRe(cpu_t *cpu, uint8_t opcode) {
 // JR C,e instruction.
 static void opc_JRCe(cpu_t *cpu, uint8_t opcode) {
     opc_tbl[0x38].TStates = 12;  // Condition is met.
-    int8_t e = opc_fetch8(cpu);
+    int8_t e = (int8_t)opc_fetch8(cpu);
 
     if (GET_FLAG_CARRY(cpu))
         cpu->PC += e;
@@ -3440,7 +3317,7 @@ static void opc_JRCe(cpu_t *cpu, uint8_t opcode) {
 // JR NC, e instruction.
 static void opc_JRNCe(cpu_t *cpu, uint8_t opcode) {
     opc_tbl[0x30].TStates = 12;  // Condition is met.
-    int8_t e = opc_fetch8(cpu);
+    int8_t e = (int8_t)opc_fetch8(cpu);
 
     if (!GET_FLAG_CARRY(cpu))
         cpu->PC += e;
@@ -3455,7 +3332,7 @@ static void opc_JRNCe(cpu_t *cpu, uint8_t opcode) {
 // JR Z,e instruction.
 static void opc_JRZe(cpu_t *cpu, uint8_t opcode) {
     opc_tbl[0x28].TStates = 12;  // Condition is met.
-    int8_t e = opc_fetch8(cpu);
+    int8_t e = (int8_t)opc_fetch8(cpu);
 
     if (GET_FLAG_ZERO(cpu))
         cpu->PC += e;
@@ -3470,7 +3347,7 @@ static void opc_JRZe(cpu_t *cpu, uint8_t opcode) {
 // JR NZ,e instruction.
 static void opc_JRNZe(cpu_t *cpu, uint8_t opcode) {
     opc_tbl[0x20].TStates = 12;  // Condition is met.
-    int8_t e = opc_fetch8(cpu);
+    int8_t e = (int8_t)opc_fetch8(cpu);
 
     if (!GET_FLAG_ZERO(cpu))
         cpu->PC += e;
@@ -3485,7 +3362,6 @@ static void opc_JRNZe(cpu_t *cpu, uint8_t opcode) {
 // JP (HL) instruction.
 static void opc_JPHL(cpu_t *cpu, uint8_t opcode) {
     cpu->PC = cpu->HL;
-
     LOG_DEBUG("Executed JP (HL) HL=0x%04X\n", cpu->HL);
     return;
 }
@@ -3493,7 +3369,7 @@ static void opc_JPHL(cpu_t *cpu, uint8_t opcode) {
 
 // DJNZ,e instruction.
 static void opc_DJNZe(cpu_t *cpu, uint8_t opcode) {
-    int8_t e = opc_fetch8(cpu);
+    int8_t e = (int8_t)opc_fetch8(cpu);
     cpu->B--;
 
     if (cpu->B) {
@@ -3512,7 +3388,6 @@ static void opc_CALLnn(cpu_t *cpu, uint8_t opcode) {
     uint16_t nn = opc_fetch16(cpu);
     cpu_stackPush(cpu, cpu->PC);
     cpu->PC = nn;
-
     LOG_DEBUG("Executed CALL 0x%04X\n", nn);
     return;
 }
@@ -3606,7 +3481,6 @@ static void opc_CALLccnn(cpu_t *cpu, uint8_t opcode) {
 // RET instruction.
 static void opc_RET(cpu_t *cpu, uint8_t opcode) {
     cpu->PC = cpu_stackPop(cpu);
-
     LOG_DEBUG("Executed RET\n");
     return;
 }
@@ -3738,8 +3612,7 @@ static void opc_RSTp(cpu_t *cpu, uint8_t opcode) {
 static void opc_INAn(cpu_t *cpu, uint8_t opcode) {
     uint8_t n = opc_fetch8(cpu);
     cpu->A = cpu->portIO_in(n);
-
-    LOG_DEBUG("Executed IN A,(0x%02X)\n", n);
+    LOG_DEBUG("Executed IN A,(0x%02hhX)\n", n);
     return;
 }
 
@@ -3748,8 +3621,7 @@ static void opc_INAn(cpu_t *cpu, uint8_t opcode) {
 static void opc_OUTnA(cpu_t *cpu, uint8_t opcode) {
     uint8_t n = opc_fetch8(cpu);
     cpu->portIO_out(n, cpu->A);
-
-    LOG_DEBUG("Executed OUT (0x%02X),A\n", n);
+    LOG_DEBUG("Executed OUT (0x%02hhX),A\n", n);
     return;
 }
 
