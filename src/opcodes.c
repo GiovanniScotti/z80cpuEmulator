@@ -95,10 +95,9 @@ static void opc_testZFlag16(cpu_t *cpu, uint16_t val) {
 // - addition w/carry: op1 = A, op2 = B, isSub = false.
 // - subtraction w/carry: op1 = A, op2 = ~B, isSub = true.
 static void opc_testHFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
-    uint8_t res, bool isSub) {
+    uint8_t c, bool isSub) {
 
-    uint8_t carryIns = res ^ op1 ^ op2;
-    uint8_t carryHalf = (carryIns >> 4) & 0x1;
+    uint8_t carryHalf = (((op1 & 0xF) + (op2 & 0xF) + (c & 0xF)) & 0x10);
 
     if (!isSub) {
         if (carryHalf)
@@ -123,10 +122,9 @@ static void opc_testHFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
 // - addition w/carry: op1 = A, op2 = B, isSub = false.
 // - subtraction w/carry: op1 = A, op2 = ~B, isSub = true.
 static void opc_testHFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2,
-    uint16_t res, bool isSub) {
+    uint16_t c, bool isSub) {
 
-    uint16_t carryIns = res ^ op1 ^ op2;
-    uint16_t carryHalf = (carryIns >> 12) & 0x1;
+    uint16_t carryHalf = (((op1 & 0xFFF) + (op2 & 0xFFF) + (c & 0xFFF)) & 0x1000);
 
     if (!isSub) {
         if (carryHalf)
@@ -145,34 +143,32 @@ static void opc_testHFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2,
 
 // Tests if the given 8-bit operands generate an overflow and sets the cpu
 // status register (P/V flag) accordingly.
-static void opc_testVFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2,
-    uint8_t c, uint8_t res) {
+static void opc_testVFlag8(cpu_t *cpu, uint8_t op1, uint8_t op2, uint8_t c) {
 
-    uint8_t carryOut = (op1 > 0xFF - op2 - c);
-    uint8_t carryIns = res ^ op1 ^ op2;
-    uint8_t overflow = (carryIns >> 7) ^ carryOut;
+    int32_t res = op1 + op2 + c;
+    int32_t carry = res ^ op1 ^ op2;
 
-    if (overflow)
+    if ((carry & (1 << 8)) != (carry & (1 << 7)))
         SET_FLAG_PARITY(cpu);
     else
         RESET_FLAG_PARITY(cpu);
+
     return;
 }
 
 
 // Tests if the given 16-bit operands generate an overflow and sets the cpu
 // status register (P/V flag) accordingly.
-static void opc_testVFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2,
-    uint8_t c, uint16_t res) {
+static void opc_testVFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2, uint8_t c) {
 
-    uint16_t carryOut = (op1 > 0xFFFF - op2 - c);
-    uint16_t carryIns = res ^ op1 ^ op2;
-    uint16_t overflow = (carryIns >> 15) ^ carryOut;
+    int32_t res = op1 + op2 + c;
+    int32_t carry = res ^ op1 ^ op2;
 
-    if (overflow)
+    if ((carry & (1 << 16)) != (carry & (1 << 15)))
         SET_FLAG_PARITY(cpu);
     else
         RESET_FLAG_PARITY(cpu);
+
     return;
 }
 
@@ -533,8 +529,8 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, res, 0);
-        opc_testVFlag8(cpu, cpu->A, data, 0, res);
+        opc_testHFlag8(cpu, cpu->A, data, 0, 0);
+        opc_testVFlag8(cpu, cpu->A, data, 0);
         RESET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, data, 0, 0);
 
@@ -552,8 +548,8 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, res, 0);
-        opc_testVFlag8(cpu, cpu->A, data, c, res);
+        opc_testHFlag8(cpu, cpu->A, data, c, 0);
+        opc_testVFlag8(cpu, cpu->A, data, c);
         RESET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, data, c, 0);
 
@@ -570,8 +566,8 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
-        opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+        opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+        opc_testVFlag8(cpu, cpu->A, ~data, 1);
         SET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
@@ -590,8 +586,8 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         // A - B - C = A + ~B + !C
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, !c, res);
+        opc_testHFlag8(cpu, cpu->A, ~data, !c, 1);
+        opc_testVFlag8(cpu, cpu->A, ~data, !c);
         SET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
 
@@ -662,8 +658,8 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
-        opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+        opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+        opc_testVFlag8(cpu, cpu->A, ~data, 1);
         SET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
@@ -680,7 +676,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, 1, res, 0);
+        opc_testHFlag8(cpu, data, 1, 0, 0);
         RESET_FLAG_ADDSUB(cpu);
 
         if (data == 0x7F)
@@ -702,7 +698,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, (~1 + 1), res, 1);
+        opc_testHFlag8(cpu, data, (~1 + 1), 0, 1);
         SET_FLAG_ADDSUB(cpu);
 
         if (data == 0x80)
@@ -721,7 +717,7 @@ static void opc_LDIX(cpu_t *cpu, uint8_t opcode) {
         uint16_t data = opc_readReg16(cpu, src, REG16_PP);
         uint16_t res = cpu->IX + data;
 
-        opc_testHFlag16(cpu, cpu->IX, data, res, 0);
+        opc_testHFlag16(cpu, cpu->IX, data, 0, 0);
         RESET_FLAG_ADDSUB(cpu);
         opc_testCFlag16(cpu, cpu->IX, data, 0, 0);
 
@@ -1072,8 +1068,8 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, res, 0);
-        opc_testVFlag8(cpu, cpu->A, data, 0, res);
+        opc_testHFlag8(cpu, cpu->A, data, 0, 0);
+        opc_testVFlag8(cpu, cpu->A, data, 0);
         RESET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, data, 0, 0);
 
@@ -1091,8 +1087,8 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, data, res, 0);
-        opc_testVFlag8(cpu, cpu->A, data, c, res);
+        opc_testHFlag8(cpu, cpu->A, data, c, 0);
+        opc_testVFlag8(cpu, cpu->A, data, c);
         RESET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, data, c, 0);
 
@@ -1109,8 +1105,8 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
-        opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+        opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+        opc_testVFlag8(cpu, cpu->A, ~data, 1);
         SET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
@@ -1129,8 +1125,8 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         // A - B - C = A + ~B + !C
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
-        opc_testVFlag8(cpu, cpu->A, ~data, !c, res);
+        opc_testHFlag8(cpu, cpu->A, ~data, !c, 1);
+        opc_testVFlag8(cpu, cpu->A, ~data, !c);
         SET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
 
@@ -1201,8 +1197,8 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
-        opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+        opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+        opc_testVFlag8(cpu, cpu->A, ~data, 1);
         SET_FLAG_ADDSUB(cpu);
         opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
@@ -1219,7 +1215,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, 1, res, 0);
+        opc_testHFlag8(cpu, data, 1, 0, 0);
         RESET_FLAG_ADDSUB(cpu);
 
         if (data == 0x7F)
@@ -1241,7 +1237,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, data, (~1 + 1), res, 1);
+        opc_testHFlag8(cpu, data, (~1 + 1), 0, 1);
         SET_FLAG_ADDSUB(cpu);
 
         if (data == 0x80)
@@ -1260,7 +1256,7 @@ static void opc_LDIY(cpu_t *cpu, uint8_t opcode) {
         uint16_t data = opc_readReg16(cpu, src, REG16_RR);
         uint16_t res = cpu->IY + data;
 
-        opc_testHFlag16(cpu, cpu->IY, data, res, 0);
+        opc_testHFlag16(cpu, cpu->IY, data, 0, 0);
         RESET_FLAG_ADDSUB(cpu);
         opc_testCFlag16(cpu, cpu->IY, data, 0, 0);
 
@@ -1757,7 +1753,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), res, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), 0, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1777,7 +1773,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), res, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), 0, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1806,7 +1802,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), res, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), 0, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1826,7 +1822,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), res, 1);
+        opc_testHFlag8(cpu, cpu->A, (~data_HL + 1), 0, 1);
 
         SET_FLAG_ADDSUB(cpu);
         if (cpu->BC)
@@ -1852,7 +1848,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag8(cpu, res);
         opc_testZFlag8(cpu, res);
-        opc_testHFlag8(cpu, 0, (~cpu->A + 1), res, 1);
+        opc_testHFlag8(cpu, 0, (~cpu->A + 1), 0, 1);
         SET_FLAG_ADDSUB(cpu);
 
         if (cpu->A == 0x80)
@@ -1903,8 +1899,8 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
 
         opc_testSFlag16(cpu, res);
         opc_testZFlag16(cpu, res);
-        opc_testHFlag16(cpu, cpu->HL, data, res, 0);
-        opc_testVFlag16(cpu, cpu->HL, data, c, res);
+        opc_testHFlag16(cpu, cpu->HL, data, c, 0);
+        opc_testVFlag16(cpu, cpu->HL, data, c);
         RESET_FLAG_ADDSUB(cpu);
         opc_testCFlag16(cpu, cpu->HL, data, c, 0);
 
@@ -1923,10 +1919,10 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
         // A - B - C = A + ~B + !C
         opc_testSFlag16(cpu, res);
         opc_testZFlag16(cpu, res);
-        opc_testHFlag16(cpu, cpu->HL, ~data, res, 1);
-        opc_testVFlag8(cpu, cpu->HL, ~data, !c, res);
+        opc_testHFlag16(cpu, cpu->HL, ~data, !c, 1);
+        opc_testVFlag16(cpu, cpu->HL, ~data, !c);
         SET_FLAG_ADDSUB(cpu);
-        opc_testCFlag8(cpu, cpu->HL, ~data, !c, 1);
+        opc_testCFlag16(cpu, cpu->HL, ~data, !c, 1);
 
         cpu->HL = res;
         LOG_DEBUG("Executed SBC HL,%s\n", opc_regName16(src, REG16_DD));
@@ -2194,8 +2190,8 @@ static void opc_ADDAr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, res, 0);
-    opc_testVFlag8(cpu, cpu->A, data, 0, res);
+    opc_testHFlag8(cpu, cpu->A, data, 0, 0);
+    opc_testVFlag8(cpu, cpu->A, data, 0);
     RESET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, data, 0, 0);
 
@@ -2213,8 +2209,8 @@ static void opc_SUBAr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
-    opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+    opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+    opc_testVFlag8(cpu, cpu->A, ~data, 1);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
@@ -2231,8 +2227,8 @@ static void opc_ADDAn(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, n, res, 0);
-    opc_testVFlag8(cpu, cpu->A, n, 0, res);
+    opc_testHFlag8(cpu, cpu->A, n, 0, 0);
+    opc_testVFlag8(cpu, cpu->A, n, 0);
     RESET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, n, 0, 0);
 
@@ -2249,8 +2245,8 @@ static void opc_SUBAn(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~n + 1), res, 1);
-    opc_testVFlag8(cpu, cpu->A, (~n + 1), 0, res);
+    opc_testHFlag8(cpu, cpu->A, (~n + 1), 0, 1);
+    opc_testVFlag8(cpu, cpu->A, ~n, 1);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, (~n + 1), 0, 1);
 
@@ -2267,8 +2263,8 @@ static void opc_ADDAHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, res, 0);
-    opc_testVFlag8(cpu, cpu->A, data, 0, res);
+    opc_testHFlag8(cpu, cpu->A, data, 0, 0);
+    opc_testVFlag8(cpu, cpu->A, data, 0);
     RESET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, data, 0, 0);
 
@@ -2285,8 +2281,8 @@ static void opc_SUBAHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
-    opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+    opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+    opc_testVFlag8(cpu, cpu->A, ~data, 1);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
@@ -2305,8 +2301,8 @@ static void opc_ADCAr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, res, 0);
-    opc_testVFlag8(cpu, cpu->A, data, c, res);
+    opc_testHFlag8(cpu, cpu->A, data, c, 0);
+    opc_testVFlag8(cpu, cpu->A, data, c);
     RESET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, data, c, 0);
 
@@ -2326,8 +2322,8 @@ static void opc_SBCAr(cpu_t *cpu, uint8_t opcode) {
     // A - B - C = A + ~B + !C
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, !c, res);
+    opc_testHFlag8(cpu, cpu->A, ~data, !c, 1);
+    opc_testVFlag8(cpu, cpu->A, ~data, !c);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
 
@@ -2345,8 +2341,8 @@ static void opc_ADCAn(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, n, res, 0);
-    opc_testVFlag8(cpu, cpu->A, n, c, res);
+    opc_testHFlag8(cpu, cpu->A, n, c, 0);
+    opc_testVFlag8(cpu, cpu->A, n, c);
     RESET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, n, c, 0);
 
@@ -2365,8 +2361,8 @@ static void opc_SBCAn(cpu_t *cpu, uint8_t opcode) {
     // A - B - C = A + ~B + !C
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, ~n, res, 1);
-    opc_testVFlag8(cpu, cpu->A, ~n, !c, res);
+    opc_testHFlag8(cpu, cpu->A, ~n, !c, 1);
+    opc_testVFlag8(cpu, cpu->A, ~n, !c);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, ~n, !c, 1);
 
@@ -2384,8 +2380,8 @@ static void opc_ADCAHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, data, res, 0);
-    opc_testVFlag8(cpu, cpu->A, data, c, res);
+    opc_testHFlag8(cpu, cpu->A, data, c, 0);
+    opc_testVFlag8(cpu, cpu->A, data, c);
     RESET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, data, c, 0);
 
@@ -2404,8 +2400,8 @@ static void opc_SBCAHL(cpu_t *cpu, uint8_t opcode) {
     // A - B - C = A + ~B + !C
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, ~data, res, 1);
-    opc_testVFlag8(cpu, cpu->A, ~data, !c, res);
+    opc_testHFlag8(cpu, cpu->A, ~data, !c, 1);
+    opc_testVFlag8(cpu, cpu->A, ~data, !c);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, ~data, !c, 1);
 
@@ -2588,8 +2584,8 @@ static void opc_CPr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
-    opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+    opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+    opc_testVFlag8(cpu, cpu->A, ~data, 1);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
@@ -2605,8 +2601,8 @@ static void opc_CPn(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~n + 1), res, 1);
-    opc_testVFlag8(cpu, cpu->A, (~n + 1), 0, res);
+    opc_testHFlag8(cpu, cpu->A, (~n + 1), 0, 1);
+    opc_testVFlag8(cpu, cpu->A, ~n, 1);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, (~n + 1), 0, 1);
 
@@ -2622,8 +2618,8 @@ static void opc_CPHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, cpu->A, (~data + 1), res, 1);
-    opc_testVFlag8(cpu, cpu->A, (~data + 1), 0, res);
+    opc_testHFlag8(cpu, cpu->A, (~data + 1), 0, 1);
+    opc_testVFlag8(cpu, cpu->A, ~data, 1);
     SET_FLAG_ADDSUB(cpu);
     opc_testCFlag8(cpu, cpu->A, (~data + 1), 0, 1);
 
@@ -2640,7 +2636,7 @@ static void opc_INCr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, 1, res, 0);
+    opc_testHFlag8(cpu, data, 1, 0, 0);
     RESET_FLAG_ADDSUB(cpu);
 
     if (data == 0x7F)
@@ -2661,7 +2657,7 @@ static void opc_INCHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, 1, res, 0);
+    opc_testHFlag8(cpu, data, 1, 0, 0);
     RESET_FLAG_ADDSUB(cpu);
 
     if (data == 0x7F)
@@ -2683,7 +2679,7 @@ static void opc_DECr(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, (~1 + 1), res, 1);
+    opc_testHFlag8(cpu, data, (~1 + 1), 0, 1);
     SET_FLAG_ADDSUB(cpu);
 
     if (data == 0x80)
@@ -2704,7 +2700,7 @@ static void opc_DECHL(cpu_t *cpu, uint8_t opcode) {
 
     opc_testSFlag8(cpu, res);
     opc_testZFlag8(cpu, res);
-    opc_testHFlag8(cpu, data, (~1 + 1), res, 1);
+    opc_testHFlag8(cpu, data, (~1 + 1), 0, 1);
     SET_FLAG_ADDSUB(cpu);
 
     if (data == 0x80)
@@ -2827,7 +2823,7 @@ static void opc_ADDHLss(cpu_t *cpu, uint8_t opcode) {
     uint16_t data = opc_readReg16(cpu, src, REG16_DD);
     uint16_t res = cpu->HL + data;
 
-    opc_testHFlag16(cpu, cpu->HL, data, res, 0);
+    opc_testHFlag16(cpu, cpu->HL, data, 0, 0);
     RESET_FLAG_ADDSUB(cpu);
     opc_testCFlag16(cpu, cpu->HL, data, 0, 0);
 
