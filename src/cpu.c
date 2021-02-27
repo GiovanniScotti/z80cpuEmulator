@@ -1,4 +1,3 @@
-#include <ncurses.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -7,17 +6,23 @@
 #include "cpu.h"
 #include "opcodes.h"
 #include "logger.h"
-#include "mc6850.h"
 
 
-// Initializes the CPU data structures.
+// Initializes the CPU data structure.
 // Returns 0 if no errors occur.
-int32_t cpu_init(cpu_t *cpu, mem_chunk_t *mem_list) {
+int32_t cpu_init(cpu_t *cpu, mem_chunk_t *mem_list, board_t *board) {
 
     if (mem_list == NULL) {
         LOG_ERROR("Cannot init the cpu. No memory chunks provided.\n");
         return 1;
     }
+
+    if (board == NULL) {
+        LOG_ERROR("No parent board defined.\n");
+        return 1;
+    }
+
+    cpu->board = board;
 
     bool is_romDefined = false;
     bool is_ramDefined = false;
@@ -92,10 +97,13 @@ int32_t cpu_init(cpu_t *cpu, mem_chunk_t *mem_list) {
 int32_t cpu_destroy(cpu_t *cpu) {
     for (mem_chunk_t *mc = cpu->memory; mc != NULL; mc = mc->next) {
         if (mc != NULL) {
-            LOG_INFO("Deallocation of chunk %s.\n", mc->label);
+            LOG_INFO("Deallocation of %s chunk.\n", mc->label);
             free(mc->buff);
+            free(mc);
         }
     }
+
+    LOG_INFO("Deallocated cpu memory.\n");
     return 0;
 }
 
@@ -199,21 +207,28 @@ static void cpu_doMaskableINT(cpu_t *cpu) {
             cpu->IFF2 = 0;
             cpu->is_pendingMI = 0;
             cpu->halt = 0;
-            // Interrupt mode 1.
+
+            // Interrupt mode 0.
             if (cpu->IM == INT_MODE_0) {
                 cpu_stackPush(cpu, cpu->PC);
                 /* TODO: instruction execution. */
                 cpu->cycles += 2;
                 LOG_FATAL("Interrupt mode 0 not supported yet.\n");
                 raise(SIGINT);
-            } else if (cpu->IM == INT_MODE_1) {
+            }
+
+            // Interrupt mode 1.
+            else if (cpu->IM == INT_MODE_1) {
                 cpu_stackPush(cpu, cpu->PC);
                 cpu->PC = 0x0038;
                 // Two additional cycles required for restarting.
                 // RST p requires 11 cycles.
                 cpu->cycles += 13;
                 LOG_DEBUG("Caught mode 1 interrupt.\n");
-            } else if (cpu->IM == INT_MODE_2) {
+            }
+
+            // Interrupt mode 2.
+            else if (cpu->IM == INT_MODE_2) {
                 cpu_stackPush(cpu, cpu->PC);
                 uint16_t rst_addr = ((cpu->I << 8) | (cpu->int_data & 0xFE));
                 uint8_t int_addrL = cpu_read(cpu, rst_addr);
@@ -221,7 +236,9 @@ static void cpu_doMaskableINT(cpu_t *cpu) {
                 cpu->PC = (int_addrL | (int_addrH << 8));
                 cpu->cycles += 19;
                 LOG_DEBUG("Caught mode 2 interrupt.\n");
-            } else {
+            }
+
+            else {
                 LOG_FATAL("Unknown interrupt mode.\n");
                 raise(SIGINT);
             }
@@ -231,78 +248,37 @@ static void cpu_doMaskableINT(cpu_t *cpu) {
 }
 
 
-// Starts cpu emulation. Executes at most 'instr_limit' instructions or
-// never stops if -1 is given.
-void cpu_emulate(cpu_t *cpu, int32_t instr_limit, bool is_terminal) {
-    LOG_INFO("Emulation started.\n");
+// Executes one instruction.
+void cpu_emulate(cpu_t *cpu) {
+    uint8_t opcode = 0; // NOP, default for HALT;
 
-    int32_t instr_count = 0;
-    bool do_inf_loop = (instr_limit < 0);
-
-    while (do_inf_loop || (instr_count < instr_limit)) {
-        uint8_t opcode = 0; // NOP, default for HALT;
-
-        if (!cpu->halt) {
-            // Fetches instruction and increases the PC.
-            opcode = opc_fetch8(cpu);
-        }
-
-        // Executes instruction.
-        opc_tbl[opcode].execute(cpu, opcode);
-        cpu->cycles += opc_tbl[opcode].TStates;
-        cpu->instr++;
-        instr_count++;
-
-        // TODO: should we increment register R?
-
-        // Detects interrupts at the end of instruction's execution.
-        // NMIs have priority over MI.
-        if (cpu->is_pendingNMI)
-            cpu_doNonMaskableINT(cpu);
-        else if (cpu->is_pendingMI)
-            cpu_doMaskableINT(cpu);
-
-
-        // TODO: peripheral management. Do we need callbacks of any kind?
-
-        // After the execution of the current instruction, checks for
-        // key pressed with kbhit(). If one key was pressed, then puts it
-        // into RDR, set RX_FULL and is_pendingInterrupt.
-
-        if (kbhit() && !(mc6850_getStatus() & RX_FULL)) {
-            char ch = getch();
-            if (ch == 0x0A) {
-                mc6850_setRDR(0x0D); // Carriage return.
-            } else
-                mc6850_setRDR(ch);
-
-            mc6850_setStatus(mc6850_getStatus() | RX_FULL);
-            // FIXME: it's up to the peripheral overwriting a pending interrupt.
-            cpu->is_pendingMI = 1;
-        }
-
-        // After checking incoming characters, checks the ACIA status register
-        // and determines if a byte is ready to be transmitted.
-
-        if (!(mc6850_getStatus() & TX_EMPTY)) {
-            char charToPrint = mc6850_getTDR();
-            if (is_terminal) {
-                if (charToPrint == 0x0D) { // Carriage return.
-                    printw("\n");
-                } else if (charToPrint == 0x0C) { // New page - Form Feed.
-                    clear();
-                } else if (charToPrint == 0x0A) {
-                    // Do nothing
-                } else {
-                    printw("%c", charToPrint);
-                }
-                refresh();
-            }
-
-            mc6850_setStatus(mc6850_getStatus() | TX_EMPTY);
-        }
+    if (!cpu->halt) {
+        // Fetches instruction and increases the PC.
+        opcode = opc_fetch8(cpu);
     }
 
+    // Executes instruction.
+    opc_tbl[opcode].execute(cpu, opcode);
+    cpu->cycles += opc_tbl[opcode].TStates;
+    cpu->instr++;
+
+    // Detects interrupts at the end of instruction's execution.
+    // NMIs have priority over MI.
+    if (cpu->is_pendingNMI)
+        cpu_doNonMaskableINT(cpu);
+    else if (cpu->is_pendingMI)
+        cpu_doMaskableINT(cpu);
+
+    return;
+}
+
+
+// Sets callbacks for IO operations. Callbacks are defined at board level.
+void cpu_setIOcallbacks(cpu_t *cpu, uint8_t (*portIO_in)(board_t *, uint8_t),
+    void (*portIO_out)(board_t *, uint8_t, uint8_t)) {
+
+    cpu->portIO_in = portIO_in;
+    cpu->portIO_out = portIO_out;
     return;
 }
 

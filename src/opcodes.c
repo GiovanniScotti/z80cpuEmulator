@@ -177,15 +177,16 @@ static void opc_testVFlag16(cpu_t *cpu, uint16_t op1, uint16_t op2, uint8_t c) {
 // Tests the given 8-bit operand parity and sets the cpu status register
 // (P/V flag) accordingly.
 static void opc_testPFlag8(cpu_t *cpu, uint8_t val) {
-    uint32_t set_bits = 0;
+    bool is_even = true;
+
     while (val > 0) {
         if ((val & 1) == 1)
-            set_bits++;
+            is_even = !is_even;
         val = val >> 1;
     }
 
-    if (set_bits % 2) RESET_FLAG_PARITY(cpu); // Odd.
-    else SET_FLAG_PARITY(cpu); // Even.
+    if (is_even) SET_FLAG_PARITY(cpu);
+    else RESET_FLAG_PARITY(cpu);
     return;
 }
 
@@ -1968,7 +1969,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     else if ((next_opc & 0xC7) == 0x40) {
         opc_tbl[0xED].TStates = 12;
         uint8_t dst = ((next_opc >> 3) & 0x07);
-        uint8_t res = cpu->portIO_in(cpu->C);
+        uint8_t res = cpu->portIO_in(cpu->board, cpu->C);
         opc_writeReg(cpu, dst, res);
 
         opc_testSFlag8(cpu, res);
@@ -1984,7 +1985,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     else if ((next_opc & 0xC7) == 0x41) {
         opc_tbl[0xED].TStates = 12;
         uint8_t src = ((next_opc >> 3) & 0x07);
-        cpu->portIO_out(cpu->C, opc_readReg(cpu, src));
+        cpu->portIO_out(cpu->board, cpu->C, opc_readReg(cpu, src));
 
         LOG_DEBUG("Executed OUT (C),%s\n", opc_regName8(src));
     }
@@ -1992,7 +1993,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     // INI instruction.
     else if (next_opc == 0xA2) {
         opc_tbl[0xED].TStates = 16;
-        uint8_t res = cpu->portIO_in(cpu->C);
+        uint8_t res = cpu->portIO_in(cpu->board, cpu->C);
         cpu_write(cpu, res, cpu->HL);
         cpu->B--;
         cpu->HL++;
@@ -2010,7 +2011,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0xA3) {
         opc_tbl[0xED].TStates = 16;
         uint8_t res = cpu_read(cpu, cpu->HL);
-        cpu->portIO_out(cpu->C, res);
+        cpu->portIO_out(cpu->board, cpu->C, res);
         cpu->B--;
         cpu->HL++;
 
@@ -2026,7 +2027,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     // IND instruction.
     else if (next_opc == 0xAA) {
         opc_tbl[0xED].TStates = 16;
-        uint8_t res = cpu->portIO_in(cpu->C);
+        uint8_t res = cpu->portIO_in(cpu->board, cpu->C);
         cpu_write(cpu, res, cpu->HL);
         cpu->B--;
         cpu->HL--;
@@ -2044,7 +2045,7 @@ static void opc_LDRIddnn(cpu_t *cpu, uint8_t opcode) {
     else if (next_opc == 0xAB) {
         opc_tbl[0xED].TStates = 16;
         uint8_t res = cpu_read(cpu, cpu->HL);
-        cpu->portIO_out(cpu->C, res);
+        cpu->portIO_out(cpu->board, cpu->C, res);
         cpu->B--;
         cpu->HL--;
 
@@ -3611,7 +3612,7 @@ static void opc_RSTp(cpu_t *cpu, uint8_t opcode) {
 // IN A,(n) instruction.
 static void opc_INAn(cpu_t *cpu, uint8_t opcode) {
     uint8_t n = opc_fetch8(cpu);
-    cpu->A = cpu->portIO_in(n);
+    cpu->A = cpu->portIO_in(cpu->board, n);
     LOG_DEBUG("Executed IN A,(0x%02hhX)\n", n);
     return;
 }
@@ -3620,7 +3621,7 @@ static void opc_INAn(cpu_t *cpu, uint8_t opcode) {
 // OUT (n),A.
 static void opc_OUTnA(cpu_t *cpu, uint8_t opcode) {
     uint8_t n = opc_fetch8(cpu);
-    cpu->portIO_out(n, cpu->A);
+    cpu->portIO_out(cpu->board, n, cpu->A);
     LOG_DEBUG("Executed OUT (0x%02hhX),A\n", n);
     return;
 }

@@ -2,13 +2,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <signal.h>
 #include <getopt.h>
 
 #include "logger.h"
-#include "hex2array.h"
-#include "cpu.h"
-#include "mc6850.h"
+#include "board.h"
 
 ///////////////////////////////////////////////////////////
 // Z80 CPU Emulator VERSION.
@@ -19,13 +18,13 @@
 
 
 static bool is_terminal = false;
-static cpu_t z80;
+static board_t z80_sys;
 
 
 // Exit handler in case SIGINT is received.
 static void exitHandler(int sigNumber) {
     logger_close();
-    cpu_destroy(&z80);
+    board_destroy(&z80_sys);
     if (is_terminal)
         endwin();
     exit(1);
@@ -129,47 +128,18 @@ int main(int argc, char **argv) {
     sa.sa_handler = &exitHandler;
     sigaction(SIGINT, &sa, NULL);
 
-
-    // TODO: call self_test() to perform self checking operations.
-
-
-    ///////////////////////////////////////////////////////
-    // MEMORY CONFIGURATION
-    uint8_t *rom_buff = (uint8_t *)calloc(0x8000, sizeof(uint8_t));
-    uint8_t *ram_buff = (uint8_t *)calloc(0x8000, sizeof(uint8_t));
-
-    if (rom_buff != NULL && ram_buff != NULL) {
-        // Loads the hex file into rom memory.
-        if (hex2array(ROM_PATH, rom_buff, 0x8000)) {
-            LOG_ERROR("Unable to load the hex file (%s).\n", ROM_PATH);
-        }
-    } else {
-        LOG_FATAL("Cannot initialize memory structures.");
+    // Board initialization.
+    if (board_init(&z80_sys, ROM_PATH)) {
+        LOG_FATAL("Cannot initialize the system.\n");
         raise(SIGINT);
     }
 
-    // Memory configuration:
-    // 0x0000 - 0x7FFF -> ROM
-    // 0x8000 - 0xFFFF -> RAM
-    mem_chunk_t ram = {"RAM", CHUNK_READWRITE, 0x8000, 0x8000, ram_buff, NULL};
-    mem_chunk_t rom = {"ROM", CHUNK_READONLY, 0, 0x8000, rom_buff, &ram};
+    // System emulation.
+    board_emulate(&z80_sys, -1, is_terminal);
 
-    // CPU initialization.
-    if (cpu_init(&z80, &rom)) {
-        LOG_FATAL("Cannot initialize the cpu.\n");
-        raise(SIGINT);
-    }
+    // Board destruction.
+    board_destroy(&z80_sys);
 
-    // Hooks up the ACIA.
-    mc6850_init();
-    z80.portIO_in = mc6850_cpuOut;
-    z80.portIO_out = mc6850_cpuIn;
-
-    // Emulation.
-    cpu_emulate(&z80, -1, is_terminal);
-
-    // Termination.
-    cpu_destroy(&z80);
     logger_close();
     if (is_terminal)
         endwin();

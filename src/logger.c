@@ -64,6 +64,5 @@ void logger_write(const int32_t level, const char *format, ...) {
 // Sets the logger verbosity level.
 void logger_set_verbosity(int32_t level) {
     logger_verbosity = level;
-    LOG_WARNING("Verbosity level set to %d.\n", logger_verbosity);
     return;
 }

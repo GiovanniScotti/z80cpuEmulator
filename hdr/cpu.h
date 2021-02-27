@@ -4,6 +4,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "board.h"
+
+
+// This is used to fix the circular dependency between cpu and board.
+typedef struct board_t board_t;
+
 ///////////////////////////////////////////////////////////
 // FLAG REGISTER BITS DEFINITIONS
 // Sign flag is set if the sign of a result after an operation is negative,
@@ -65,7 +71,8 @@ typedef struct mem_chunk_t {
 } mem_chunk_t;
 
 
-typedef struct {
+// Defines the cpu state.
+typedef struct cpu_t {
     uint32_t cycles;
     uint32_t instr;
     // If a software HALT instruction is encountered, the cpu will sit there
@@ -152,19 +159,22 @@ typedef struct {
     uint8_t int_data;
 
     // IO.
-    uint8_t (*portIO_in) (uint8_t port);
-    void (*portIO_out) (uint8_t port, uint8_t data);
+    board_t *board;
+    uint8_t (*portIO_in) (board_t *board, uint8_t port);
+    void (*portIO_out) (board_t *board, uint8_t port, uint8_t data);
 } cpu_t;
 
 
-int32_t cpu_init(cpu_t *cpu, mem_chunk_t *mem_list);
+int32_t cpu_init(cpu_t *cpu, mem_chunk_t *mem_list, board_t *board);
 int32_t cpu_destroy(cpu_t *cpu);
 void cpu_reset(cpu_t *cpu);
 uint8_t cpu_read(cpu_t *cpu, const uint16_t addr);
 void cpu_write(cpu_t *cpu, const uint8_t data, const uint16_t addr);
 void cpu_stackPush(cpu_t *cpu, uint16_t data);
 uint16_t cpu_stackPop(cpu_t *cpu);
-void cpu_emulate(cpu_t *cpu, int32_t instr_limit, bool is_terminal);
+void cpu_emulate(cpu_t *cpu);
+void cpu_setIOcallbacks(cpu_t *cpu, uint8_t (*portIO_in)(board_t *, uint8_t),
+    void (*portIO_out)(board_t *, uint8_t, uint8_t));
 
 void cpu_printChunk(mem_chunk_t *chunk);
 void cpu_dumpRegisters(cpu_t *cpu);

@@ -16,23 +16,19 @@
   Transmitting interrupt is disabled. Reception interrupt is enabled.
 */
 
-typedef struct {
+typedef struct mc6850_t {
     uint8_t TDR;    // Transmit Data Register.
     uint8_t RDR;    // Receive Data Register.
     uint8_t status; // Status Register.
 } mc6850_t;
 
 
-int32_t mc6850_init(void);
-uint8_t mc6850_getStatus(void);
-void mc6850_setStatus(uint8_t data);
-uint8_t mc6850_getTDR(void);
-void mc6850_setRDR(uint8_t data);
+int32_t mc6850_init(mc6850_t *mc6850);
+uint8_t mc6850_getStatus(mc6850_t *mc6850);
+void mc6850_setStatus(mc6850_t *mc6850, uint8_t data);
+uint8_t mc6850_getTDR(mc6850_t *mc6850);
+void mc6850_setRDR(mc6850_t *mc6850, uint8_t data);
 
-uint8_t mc6850_cpuOut(uint8_t port);
-void mc6850_cpuIn(uint8_t port, uint8_t data);
-
-void mc6850_dumpStatus(void);
-int32_t kbhit(void);
+void mc6850_dumpStatus(mc6850_t *mc6850);
 
 #endif // _MC6850_H_
