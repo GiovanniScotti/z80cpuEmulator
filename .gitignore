@@ -5,5 +5,7 @@
 
 *.o
 
+*.log
+
 z80emulator
 log.txt
