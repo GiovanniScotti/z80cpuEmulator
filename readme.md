@@ -3,7 +3,7 @@
 # Z80 CPU Emulator
 ## Introduction
 This is a highly portable Zilog Z80 cpu emulator written in C programming language.
-The project was originally born in order to provide an in-software version of the remarkable Grant's 7-chip Z80 computer ([link](http://searle.hostei.com/grant/z80/SimpleZ80.html)). Although the emulator runs a slightly modified version of the Microsoft BASIC as used in the Nascom 2 computer, the Z80 core can be used as a starting point for any other ambitious project.
+The project was originally born in order to provide an in-software version of the remarkable Grant's 7-chip Z80 computer ([link](http://searle.x10host.com/z80/SimpleZ80.html)). Although the emulator runs a slightly modified version of the Microsoft BASIC as used in the Nascom 2 computer, the Z80 core can be used as a starting point for any other ambitious project.
 
 ## Emulated system hardware
 The baseline emulated hardware architecture has the following specification:
